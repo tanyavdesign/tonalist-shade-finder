@@ -117,6 +117,10 @@
   .zones{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); }
   .zone{ background:var(--ink); padding:14px 12px; }
   .zone .chip{ width:100%; height:52px; border-radius:2px; margin-bottom:10px; }
+  .zone .chip-empty{
+    background:repeating-linear-gradient(-45deg, var(--surface), var(--surface) 5px, var(--raised) 5px, var(--raised) 10px);
+    border:1px solid var(--line);
+  }
   .zone .zname{ font-size:13px; color:var(--bone); }
   .zone .zval{ font-size:12px; color:var(--dim); line-height:1.45; margin-top:3px; font-variant-numeric:tabular-nums; }
 
@@ -170,7 +174,7 @@
 
   <header class="mast">
     <button class="wordmark" id="mark" title="tonalist">tonalist</button>
-    <div class="subline">shade reading<br>build 2026-09-04.3 · research</div>
+    <div class="subline">shade reading<br>build 2026-09-04.4 · research</div>
   </header>
 
   <div class="stage">
@@ -644,35 +648,30 @@ function compute(samples){
   const meta = { warnings:[], lock:lockState, wakeLock:wakeLockState, at:new Date() };
   const zoneOut = {};
 
-  /* Per-channel camera gains, estimated from the pure R/G/B flashes.
-     Each flash drives one channel; comparing how strongly the sensor
-     answers gives a diagonal correction for channel sensitivity.    */
-  const gains = channelGains(samples, meta);
-
-  /* The "skin reference" flash was being sampled and then never used —
-     the pipeline had no ground truth for what the screen's own "white"
-     actually looks like once emitted and shot through the camera. Phone
-     screens (OLED especially) commonly skew cool/blue at max brightness,
-     and per-channel sensor gains above correct camera sensitivity, not
-     that. Comparing the skinref flash's measured response against its
-     known colour gives a real target to correct against. */
-  const refGains = referenceGains(samples, gains, meta);
+  /* black/white/grey/red/green/blue are calibration flashes only — known
+     colours whose sole job is characterising how THIS camera+screen pair
+     distorts a known colour into whatever the sensor reports, so that
+     distortion can be corrected out. They are never used as the light
+     the skin tone itself is read under. That reading comes from the
+     `warm` flash instead, run through the correction this derives.     */
+  const gains = calibrationGains(samples, meta);
 
   for(const z of ZONES){
-    const amb   = samples.ambient[z.key].map(srgbToLinear);
-    const white = samples.white[z.key].map(srgbToLinear);
+    const amb  = samples.ambient[z.key].map(srgbToLinear);
+    const lit  = samples.warm[z.key].map(srgbToLinear);
 
     // Ambient subtraction: what the screen alone put on the skin.
-    const sig = white.map((v,i) => Math.max(0, v - amb[i]));
+    const sig = lit.map((v,i) => Math.max(0, v - amb[i]));
     const energy = sig[0]+sig[1]+sig[2];
+    const lowSignal = energy < 0.04;
 
     // Quality gates, reported rather than silently swallowed.
     const ambEnergy = amb[0]+amb[1]+amb[2];
-    if(energy < 0.04) meta.warnings.push(z.label + ": barely any signal — move closer, or raise screen brightness.");
+    if(lowSignal) meta.warnings.push(z.label + ": barely any signal — move closer, or raise screen brightness.");
     if(ambEnergy > energy*1.6) meta.warnings.push(z.label + ": room light is stronger than the screen — dim the room.");
 
-    // Apply channel gains, the reference correction, then exposure scaling.
-    const corrected = sig.map((v,i) => v * gains[i] * refGains[i] * cal.k);
+    // Apply the calibration correction, then exposure scaling.
+    const corrected = sig.map((v,i) => v * gains[i] * cal.k);
     const rawRgb = sig.map(v => linearToSrgb(v * cal.k));
     let calRgb   = corrected.map(linearToSrgb);
 
@@ -684,7 +683,7 @@ function compute(samples){
     zoneOut[z.key] = {
       label:z.label, note:z.note,
       raw:rawRgb, rgb:calRgb, hex:hex(...calRgb), lab,
-      energy, ambEnergy
+      energy, ambEnergy, lowSignal
     };
   }
 
@@ -698,7 +697,7 @@ function compute(samples){
     })
     .sort((x,y) => x.dE - y.dE);
 
-  lastReading = { zones:zoneOut, ranked, samples, gains, refGains, meta };
+  lastReading = { zones:zoneOut, ranked, samples, gains, meta };
   readings.push({
     t: meta.at.toLocaleTimeString(),
     iso: meta.at.toISOString(),
@@ -710,42 +709,48 @@ function compute(samples){
   render();
 }
 
-function channelGains(samples, meta){
-  // Use the midtone zone; it has the most stable illumination.
-  const amb = samples.ambient.midtone.map(srgbToLinear);
-  const read = id => samples[id].midtone.map((v,i) => Math.max(0, srgbToLinear(v) - amb[i]));
-  const r = read("red"), g = read("green"), b = read("blue");
-  const resp = [ r[0], g[1], b[2] ];              // each channel under its own flash
-  if(resp.some(v => v < 0.006)){
-    meta.warnings.push("Channel response too faint to correct for sensor bias — using neutral gains.");
-    return [1,1,1];
-  }
-  const geo = Math.cbrt(resp[0]*resp[1]*resp[2]); // normalise so gains average to 1
-  return resp.map(v => clamp(geo / v, 0.5, 2.0));
-}
+/* Known linear colour of every calibration flash — what the screen is
+   actually emitting, in the same linear-light space as the samples.  */
+const CAL_TARGETS = { white:"#FFFFFF", grey:"#808080", red:"#FF0000", green:"#00FF00", blue:"#0000FF" };
 
-/* The grey flash (#808080) is the reference for screen colour cast, not
-   skinref: grey drives all three channels equally and hard, so it has
-   real signal to work with. skinref (#C68642) has almost no blue in it
-   to start with (R198 G134 B66) — after skin absorbs even more of what
-   little blue light hits it, the returned blue signal is usually too
-   faint above noise to trust, so that version of this function was
-   silently falling back to doing nothing. Grey doesn't have that
-   problem: if a supposedly neutral flash comes back uneven across
-   channels once camera sensitivity is already corrected for, that
-   imbalance IS the screen's actual colour cast. */
-function referenceGains(samples, gains, meta){
+/* Two earlier versions of this tried to fix colour cast from a single
+   data point each — one pure-primary flash per channel, then (when that
+   didn't hold up) one grey-flash comparison — and neither held together,
+   because a single noisy sample has no way to average itself out.
+
+   This fits one per-channel gain using ALL FIVE calibration flashes at
+   once: for channel c, it's a standard least-squares scale fit through
+   the origin across the (observed, target) pairs from white/grey/red/
+   green/blue — gain[c] = Σ(target·observed) / Σ(observed²). A flash
+   whose target for channel c is 0 (e.g. green's target red/blue) still
+   contributes: it tells the fit "whatever cross-talk the sensor shows
+   here should count against a gain that's too high overall." This is a
+   per-channel (diagonal / "von Kries") correction, the same family of
+   model actual camera white-balance algorithms use — not a full 3×3
+   matrix, so it can't undo colour rotation from cross-channel spectral
+   overlap, only per-channel scale. Given the shade library is already
+   placeholder data, that's a reasonable place to stop.
+
+   This correction is derived here and applied to the `warm` flash's
+   response elsewhere — never to white/grey/red/green/blue themselves,
+   which exist only to characterise the system, not to report a tone.  */
+function calibrationGains(samples, meta){
   const amb = samples.ambient.midtone.map(srgbToLinear);
-  const observed = samples.grey.midtone.map((v,i) =>
-    Math.max(0, srgbToLinear(v) - amb[i]) * gains[i]);
-  const expected = hexToRgb("#808080").map(srgbToLinear);
-  if(observed.some(v => v < 0.006)){
-    meta.warnings.push("Grey-flash reflection too faint to correct screen colour cast — using neutral reference gains.");
-    return [1,1,1];
+  const numer = [0,0,0], denom = [0,0,0];
+  for(const id in CAL_TARGETS){
+    const observed = samples[id].midtone.map((v,i) => Math.max(0, srgbToLinear(v) - amb[i]));
+    const target = hexToRgb(CAL_TARGETS[id]).map(srgbToLinear);
+    for(let c=0;c<3;c++){ numer[c] += target[c]*observed[c]; denom[c] += observed[c]*observed[c]; }
   }
-  const raw = expected.map((v,i) => v / observed[i]);
-  const geo = Math.cbrt(raw[0]*raw[1]*raw[2]); // normalise so gains average to 1, same as channelGains
-  return raw.map(v => clamp(v / geo, 0.5, 2.0));
+  const gain = [0,1,2].map(c => {
+    if(denom[c] < 1e-5){
+      meta.warnings.push("Calibration flashes too faint on the " + "RGB"[c] + " channel — using a neutral gain there.");
+      return 1;
+    }
+    return clamp(numer[c] / denom[c], 0.5, 2.0);
+  });
+  const geo = Math.cbrt(gain[0]*gain[1]*gain[2]); // normalise so gains average to 1
+  return gain.map(v => clamp(v / geo, 0.5, 2.0));
 }
 
 /* ══ render ═════════════════════════════════════════════════════ */
@@ -755,6 +760,18 @@ function render(){
 
   el("zones").innerHTML = ZONES.map(z => {
     const d = zones[z.key];
+    /* A near-zero signal is mostly sensor noise. A fixed gain still scales
+       that noise up into a fully saturated colour, which looks exactly as
+       confident on screen as a real reading — the opposite of the honesty
+       this instrument is supposed to have. Flag it instead of hiding it
+       behind a plausible-looking swatch. */
+    if(d.lowSignal){
+      return `<div class="zone">
+        <div class="chip chip-empty"></div>
+        <div class="zname">${d.label}</div>
+        <div class="zval">${d.note}<br>insufficient signal<br>no reliable colour</div>
+      </div>`;
+    }
     return `<div class="zone">
       <div class="chip" style="background:${d.hex}"></div>
       <div class="zname">${d.label}</div>
@@ -766,7 +783,8 @@ function render(){
   document.documentElement.style.setProperty("--measure", zones.midtone.hex);
   el("vSwatch").style.background = zones.midtone.hex;
   el("vName").textContent = top.name;
-  el("vUnder").textContent = top.undertone + " · matched on the jaw-to-neck reading";
+  el("vUnder").textContent = top.undertone + " · matched on the jaw-to-neck reading"
+    + (zones.midtone.lowSignal ? " — signal was too weak here to trust this" : "");
   el("vDelta").textContent =
     `ΔE₀₀ ${top.dE.toFixed(1)} · L* ${zones.midtone.lab[0].toFixed(1)} ` +
     `a* ${zones.midtone.lab[1].toFixed(1)} b* ${zones.midtone.lab[2].toFixed(1)}`;
@@ -857,7 +875,7 @@ function refreshAdmin(){
 }
 
 function diagText(){
-  const { samples, gains, refGains, meta, zones } = lastReading;
+  const { samples, gains, meta, zones } = lastReading;
   const rows = FLASHES.map(f => {
     const v = samples[f.id].midtone.map(n => n.toFixed(0).padStart(3));
     return `  ${f.id.padEnd(8)} ${v.join("  ")}`;
@@ -866,8 +884,7 @@ function diagText(){
     `camera control   ${meta.lock}`,
     `screen wake lock ${meta.wakeLock}`,
     `resolution       ${video.videoWidth}×${video.videoHeight}`,
-    `channel gains    ${gains.map(g => g.toFixed(3)).join("  ")}`,
-    `reference gains  ${refGains.map(g => g.toFixed(3)).join("  ")}`,
+    `calibration gains ${gains.map(g => g.toFixed(3)).join("  ")}  (fit from white/grey/red/green/blue; applied to warm)`,
     `calibration      k ${cal.k.toFixed(2)}  h ${cal.h.toFixed(1)}  s ${cal.s.toFixed(2)}  l ${cal.l.toFixed(2)}`,
     ``,
     `raw midtone sample per flash (R G B, 0–255)`,

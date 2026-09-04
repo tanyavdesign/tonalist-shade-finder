@@ -184,7 +184,7 @@
 
   <header class="mast">
     <button class="wordmark" id="mark" title="tonalist">tonalist</button>
-    <div class="subline">shade reading<br>build 2026-09-04.7 · research</div>
+    <div class="subline">shade reading<br>build 2026-09-04.8 · research</div>
   </header>
 
   <div class="stage">
@@ -223,7 +223,7 @@
   </div>
 
   <p class="note">
-    Each reading uses eight full-screen colour flashes, about seven seconds in total, to measure how your
+    Each reading uses seven full-screen colour flashes, about six and a half seconds in total, to measure how your
     camera and screen respond before it measures your skin. The screen changes colour slowly rather than
     strobing. Take as many samples as you want — move to a different patch of skin and press the button again
     each time. If flashing light is a problem for you, don't run it.
@@ -329,16 +329,22 @@ const SHADES = [
 
 /* ── flash sequence ────────────────────────────────────────────────
    'black' is the ambient baseline. Everything else is subtracted
-   against it so room light is removed from the measurement.        */
+   against it so room light is removed from the measurement.
+
+   `skinref` used to be here too, sampled every reading and never used
+   for anything (a leftover from an earlier design) — dropped, and that
+   time went into holding every other flash longer instead, since a
+   longer hold is what auto white balance (still uncontrolled on the
+   exposure side, and now only sometimes lockable on the colour side —
+   see lockCamera()) actually needs to settle before being sampled.  */
 const FLASHES = [
   { id:"ambient", color:"#000000", settle:1000 },
-  { id:"white",   color:"#FFFFFF", settle:800 },
-  { id:"grey",    color:"#808080", settle:750 },
-  { id:"red",     color:"#FF0000", settle:750 },
-  { id:"green",   color:"#00FF00", settle:750 },
-  { id:"blue",    color:"#0000FF", settle:750 },
-  { id:"warm",    color:"#FFE8B8", settle:850 },
-  { id:"skinref", color:"#C68642", settle:800 },
+  { id:"white",   color:"#FFFFFF", settle:950 },
+  { id:"grey",    color:"#808080", settle:900 },
+  { id:"red",     color:"#FF0000", settle:900 },
+  { id:"green",   color:"#00FF00", settle:900 },
+  { id:"blue",    color:"#0000FF", settle:900 },
+  { id:"warm",    color:"#FFE8B8", settle:1000 },
 ];
 
 /* ── sample zone, as a fraction of the mirrored frame ──────────────
@@ -545,28 +551,49 @@ async function lockScreenAwake(){
   }
 }
 
-/* Auto white balance is the biggest source of error here — it will
-   silently 'correct' the very thing being measured. Lock it if the
-   browser allows, and report honestly when it doesn't.             */
-let lockState = "not attempted";
-/* Forcing exposureMode/whiteBalanceMode to "manual" via applyConstraints
-   turned out to destabilise the feed on phone cameras: the picture would
-   darken dramatically mid-session, and switching apps away and back
-   fixed it — the classic signature of the browser tearing down and
-   re-acquiring the camera (which drops the forced override and falls
-   back to its own auto pipeline) on visibility change. It was also the
-   likely source of wrong colour output, since the rest of the pipeline
-   assumes a stable exposure to correct against.
+/* Forcing BOTH exposureMode and whiteBalanceMode to "manual" previously
+   destabilised the feed on phone cameras (the picture would darken
+   dramatically mid-session, recovering only on backgrounding the tab —
+   the browser dropping the forced override and reverting to auto). That
+   was traced specifically to exposure: switching to manual exposure
+   with no explicit value snapped some cameras to an arbitrary,
+   often-near-black exposure. Both locks were removed together at the
+   time, but white-balance-locking alone was never isolated and tested —
+   only exposure was ever shown to be the culprit.
 
-   So: don't touch exposure or white balance at all. Run the camera's
-   own default (auto) pipeline — stable is more useful than "locked but
-   broken" — and just report what it's doing, honestly, in diagnostics. */
+   Screenshots since then show a real, specific white-balance problem:
+   under a full-screen white/grey flash, a small warm (skin-toned) patch
+   in an otherwise near-neutral frame gets pushed pink/magenta — a
+   classic grey-world auto-white-balance artifact, where the algorithm
+   averages the whole scene toward neutral and "corrects" the one region
+   that was never actually the wrong colour. Worse, calibrationGains()
+   assumes the camera's colour response is IDENTICAL across every
+   calibration flash in one reading; auto white balance re-deciding per
+   flash breaks that assumption outright, which is a much bigger problem
+   than the resulting colour just being imperfect. Locking white balance
+   — even to a value that isn't perfectly accurate — fixes that
+   assumption; the calibration math only needs a *stable* distortion to
+   correct for, not a zero one. Exposure stays untouched here, since
+   that's the half already proven to cause instability.             */
+let lockState = "not attempted";
 async function lockCamera(){
   const track = stream?.getVideoTracks?.()[0];
-  const settings = track?.getSettings ? track.getSettings() : {};
-  lockState = "auto (no manual override attempted) — "
-    + "exposureMode:" + (settings.exposureMode || "unknown")
-    + ", whiteBalanceMode:" + (settings.whiteBalanceMode || "unknown");
+  if(!track?.applyConstraints){ lockState = "unsupported"; return; }
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const settings = track.getSettings ? track.getSettings() : {};
+  if(!caps.whiteBalanceMode?.includes("manual")){
+    lockState = "white-balance manual mode not offered by this camera — running fully auto"
+      + " (exposureMode:" + (settings.exposureMode||"unknown")
+      + ", whiteBalanceMode:" + (settings.whiteBalanceMode||"unknown") + ")";
+    return;
+  }
+  try{
+    await track.applyConstraints({ advanced:[{ whiteBalanceMode:"manual" }] });
+    lockState = "white balance locked to manual; exposure left auto ("
+      + "exposureMode:" + (settings.exposureMode||"unknown") + ")";
+  }catch(e){
+    lockState = "white-balance lock refused (" + (e.name||"error") + ") — running fully auto";
+  }
 }
 
 /* ══ guide overlay ══════════════════════════════════════════════ */

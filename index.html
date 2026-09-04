@@ -103,11 +103,12 @@
   #miniPreview{
     position:fixed; z-index:950; display:none;
     top:16px; left:50%; transform:translateX(-50%);
-    width:88px; aspect-ratio:3/4; border-radius:10px; overflow:hidden;
+    width:150px; aspect-ratio:3/4; border-radius:10px; overflow:hidden;
     border:1.5px solid rgba(239,233,225,.55); box-shadow:0 2px 16px rgba(0,0,0,.5);
   }
   #miniPreview.on{ display:block; }
   #miniPreview video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
+  #miniGuide{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
 
   /* ── results ──────────────────────────────────────────── */
   .result{ display:none; margin-top:var(--stack); }
@@ -169,7 +170,7 @@
 
   <header class="mast">
     <button class="wordmark" id="mark" title="tonalist">tonalist</button>
-    <div class="subline">shade reading<br>v1 · research build</div>
+    <div class="subline">shade reading<br>build 2026-09-04.3 · research</div>
   </header>
 
   <div class="stage">
@@ -179,7 +180,10 @@
       <div><strong>Camera not started</strong>Nothing is recorded or uploaded. Readings stay on this device until you export them.</div>
     </div>
   </div>
-  <div id="miniPreview"><video id="camMini" playsinline muted autoplay></video></div>
+  <div id="miniPreview">
+    <video id="camMini" playsinline muted autoplay></video>
+    <canvas id="miniGuide"></canvas>
+  </div>
 
   <div class="readout" id="readout">Get close enough that your face fills the frame — the screen is your only light source, and it's weak at arm's length. Turn your head about 45° to the right and include your neck in frame. Find even, indirect light and turn your screen brightness to maximum.</div>
   <div class="steps" id="steps"></div>
@@ -308,11 +312,17 @@ const FLASHES = [
 ];
 
 /* ── sample zones, as fractions of the mirrored frame ──────────────
-   Positioned for a face turned ~45° right with the neck visible.   */
+   Positioned for a face turned ~45° right with the neck visible, filling
+   the frame close-up (required — see the "get close" copy above; the
+   screen is too weak a light source at arm's length). These boxes were
+   originally tuned for a smaller, farther-back face and landed on the
+   eyes instead of cheek/jaw once users actually got close enough for a
+   usable reading. Re-tuned against real close-up framing; still worth
+   double-checking against your own screenshots after a reading.        */
 const ZONES = [
-  { key:"highlight", label:"Highlight", note:"upper cheek",  x:0.33, y:0.35, w:0.13, h:0.10 },
-  { key:"midtone",   label:"Midtone",   note:"jaw to neck",  x:0.50, y:0.55, w:0.14, h:0.11 },
-  { key:"shadow",    label:"Shadow",    note:"outer edge",   x:0.65, y:0.33, w:0.11, h:0.10 },
+  { key:"highlight", label:"Highlight", note:"upper cheek",  x:0.27, y:0.46, w:0.16, h:0.12 },
+  { key:"midtone",   label:"Midtone",   note:"jaw to neck",  x:0.43, y:0.74, w:0.18, h:0.13 },
+  { key:"shadow",    label:"Shadow",    note:"outer edge",   x:0.63, y:0.44, w:0.14, h:0.12 },
 ];
 
 /* ══ colour maths ═══════════════════════════════════════════════ */
@@ -468,6 +478,7 @@ async function startCamera(){
   await lockCamera();
   await lockScreenAwake();
   drawGuide();
+  drawMiniGuide();
   say("Get close — fill the frame with your face. Turn ~45° right, neck in frame, then take the reading. Hold still through the flashes.");
 }
 
@@ -511,30 +522,38 @@ async function lockCamera(){
 }
 
 /* ══ guide overlay ══════════════════════════════════════════════ */
-function drawGuide(){
-  const c = el("guide"), r = c.getBoundingClientRect();
-  c.width = r.width; c.height = r.height;
-  const g = c.getContext("2d");
-  g.clearRect(0,0,c.width,c.height);
+/* Draws the same alignment oval + sample-zone boxes onto any canvas
+   that shares the stage's 3:4 aspect ratio — used for the main guide
+   and again, at a smaller size, for the mini preview during the flash
+   sequence, so that preview shows the actual region being analysed
+   rather than just a plain self-view.                                 */
+function drawGuideOn(canvasEl, showLabels){
+  const r = canvasEl.getBoundingClientRect();
+  canvasEl.width = r.width; canvasEl.height = r.height;
+  const g = canvasEl.getContext("2d");
+  g.clearRect(0,0,canvasEl.width,canvasEl.height);
 
-  // face alignment oval, offset left because the head is turned
   g.strokeStyle = "rgba(239,233,225,0.22)";
   g.lineWidth = 1;
   g.beginPath();
-  g.ellipse(c.width*0.46, c.height*0.40, c.width*0.26, c.height*0.26, 0, 0, Math.PI*2);
+  g.ellipse(canvasEl.width*0.44, canvasEl.height*0.44, canvasEl.width*0.36, canvasEl.height*0.34, 0, 0, Math.PI*2);
   g.stroke();
 
   ZONES.forEach(z => {
-    const x=z.x*c.width, y=z.y*c.height, w=z.w*c.width, h=z.h*c.height;
+    const x=z.x*canvasEl.width, y=z.y*canvasEl.height, w=z.w*canvasEl.width, h=z.h*canvasEl.height;
     g.strokeStyle = "rgba(239,233,225,0.75)";
     g.lineWidth = 1;
     g.strokeRect(x, y, w, h);
-    g.fillStyle = "rgba(239,233,225,0.75)";
-    g.font = "11px 'Space Grotesk', sans-serif";
-    g.fillText(z.label.toLowerCase(), x, y - 5);
+    if(showLabels){
+      g.fillStyle = "rgba(239,233,225,0.75)";
+      g.font = "11px 'Space Grotesk', sans-serif";
+      g.fillText(z.label.toLowerCase(), x, y - 5);
+    }
   });
 }
-window.addEventListener("resize", () => { if(stream) drawGuide(); });
+function drawGuide(){ drawGuideOn(el("guide"), true); }
+function drawMiniGuide(){ drawGuideOn(el("miniGuide"), false); }
+window.addEventListener("resize", () => { if(stream){ drawGuide(); drawMiniGuide(); } });
 
 /* ══ sampling ═══════════════════════════════════════════════════ */
 /* Averages each zone from the current frame. Mirrored to match the
@@ -594,6 +613,7 @@ async function takeReading(){
   const mini  = el("miniPreview");
   flash.classList.add("on");
   mini.classList.add("on");
+  drawMiniGuide(); /* size is 0×0 while display:none, so redraw now that it's visible */
   const samples = {};
 
   for(let i=0;i<FLASHES.length;i++){
@@ -704,18 +724,23 @@ function channelGains(samples, meta){
   return resp.map(v => clamp(geo / v, 0.5, 2.0));
 }
 
-/* The skinref flash (#C68642) is a known colour shone at the same skin
-   the white flash measures. Ambient-subtract and channel-gain-correct
-   it the same way as any other zone, then compare the result to what
-   that known colour should linearize to. The ratio is what the white
-   flash's own colour cast (screen emission, not sensor) was missing. */
+/* The grey flash (#808080) is the reference for screen colour cast, not
+   skinref: grey drives all three channels equally and hard, so it has
+   real signal to work with. skinref (#C68642) has almost no blue in it
+   to start with (R198 G134 B66) — after skin absorbs even more of what
+   little blue light hits it, the returned blue signal is usually too
+   faint above noise to trust, so that version of this function was
+   silently falling back to doing nothing. Grey doesn't have that
+   problem: if a supposedly neutral flash comes back uneven across
+   channels once camera sensitivity is already corrected for, that
+   imbalance IS the screen's actual colour cast. */
 function referenceGains(samples, gains, meta){
   const amb = samples.ambient.midtone.map(srgbToLinear);
-  const observed = samples.skinref.midtone.map((v,i) =>
+  const observed = samples.grey.midtone.map((v,i) =>
     Math.max(0, srgbToLinear(v) - amb[i]) * gains[i]);
-  const expected = hexToRgb("#C68642").map(srgbToLinear);
+  const expected = hexToRgb("#808080").map(srgbToLinear);
   if(observed.some(v => v < 0.006)){
-    meta.warnings.push("Skin-reference flash too faint to correct screen colour cast — using neutral reference gains.");
+    meta.warnings.push("Grey-flash reflection too faint to correct screen colour cast — using neutral reference gains.");
     return [1,1,1];
   }
   const raw = expected.map((v,i) => v / observed[i]);

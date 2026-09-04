@@ -473,29 +473,24 @@ async function lockScreenAwake(){
    silently 'correct' the very thing being measured. Lock it if the
    browser allows, and report honestly when it doesn't.             */
 let lockState = "not attempted";
+/* Forcing exposureMode/whiteBalanceMode to "manual" via applyConstraints
+   turned out to destabilise the feed on phone cameras: the picture would
+   darken dramatically mid-session, and switching apps away and back
+   fixed it — the classic signature of the browser tearing down and
+   re-acquiring the camera (which drops the forced override and falls
+   back to its own auto pipeline) on visibility change. It was also the
+   likely source of wrong colour output, since the rest of the pipeline
+   assumes a stable exposure to correct against.
+
+   So: don't touch exposure or white balance at all. Run the camera's
+   own default (auto) pipeline — stable is more useful than "locked but
+   broken" — and just report what it's doing, honestly, in diagnostics. */
 async function lockCamera(){
   const track = stream?.getVideoTracks?.()[0];
-  if(!track?.applyConstraints){ lockState = "unsupported"; return; }
-  const caps = track.getCapabilities ? track.getCapabilities() : {};
-  const settings = track.getSettings ? track.getSettings() : {};
-  const want = {};
-  if(caps.whiteBalanceMode?.includes("manual")) want.whiteBalanceMode = "manual";
-  if(caps.exposureMode?.includes("manual")){
-    want.exposureMode = "manual";
-    /* Switching to manual exposure without an explicit value lets some
-       cameras snap to an arbitrary (often near-black) exposure instead of
-       staying where auto-exposure had already settled. Pin it there. */
-    if(typeof settings.exposureTime === "number") want.exposureTime = settings.exposureTime;
-    else if(typeof settings.exposureCompensation === "number") want.exposureCompensation = settings.exposureCompensation;
-  }
-  if(caps.focusMode?.includes("continuous"))    want.focusMode        = "continuous";
-  if(!Object.keys(want).length){ lockState = "not offered by this camera"; return; }
-  try{
-    await track.applyConstraints({ advanced:[want] });
-    lockState = "locked: " + Object.keys(want).join(", ");
-  }catch(e){
-    lockState = "lock refused (" + (e.name||"error") + ")";
-  }
+  const settings = track?.getSettings ? track.getSettings() : {};
+  lockState = "auto (no manual override attempted) — "
+    + "exposureMode:" + (settings.exposureMode || "unknown")
+    + ", whiteBalanceMode:" + (settings.whiteBalanceMode || "unknown");
 }
 
 /* ══ guide overlay ══════════════════════════════════════════════ */
@@ -534,6 +529,10 @@ function sampleFrame(){
   wctx.save();
   wctx.translate(vw, 0);
   wctx.scale(-1, 1);
+  /* Only concession to "processing": a 1px blur to knock down sensor
+     noise before averaging. No sharpening, no colour/tone mapping —
+     everything past this is our own math on the raw sample. */
+  if("filter" in wctx) wctx.filter = "blur(1px)";
   wctx.drawImage(video, 0, 0, vw, vh);
   wctx.restore();
 

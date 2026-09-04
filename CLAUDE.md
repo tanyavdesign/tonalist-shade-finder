@@ -29,7 +29,7 @@ It may also become a portfolio case study, so the diagnostics and the reasoning 
 
 In order, as implemented in `takeReading()` and `compute()`:
 
-1. **Lock the camera.** `applyConstraints` attempts `whiteBalanceMode: manual` and `exposureMode: manual`. Auto white balance is the single biggest source of error — it silently corrects the exact thing being measured. Most desktop browsers refuse; Chrome on Android usually allows it. The result is reported in diagnostics rather than assumed.
+1. **Camera runs on its own auto pipeline — deliberately not locked.** An earlier version tried `applyConstraints` with `whiteBalanceMode: manual` / `exposureMode: manual` to stop auto white balance from silently correcting the exact thing being measured. On phone cameras this destabilised the feed instead: the picture would darken dramatically mid-session, recovering only when the app was backgrounded and foregrounded (the browser tearing down and re-acquiring the camera, dropping the forced override). It was also the likely source of visibly wrong colour output downstream. So the lock attempt was removed; the camera's actual mode (`exposureMode`/`whiteBalanceMode` from `getSettings()`) is reported honestly in diagnostics instead of forced. A 1px canvas blur is the only frame processing applied, purely to knock down sensor noise before averaging — no sharpening, no tone/colour mapping.
 2. **Eight full-screen flashes**, sampled from the live video: `ambient` (black), white, grey, red, green, blue, warm yellow, skin reference.
 3. **Three zones** are averaged per flash: highlight (upper cheek), midtone (jaw into neck), shadow (outer edge). Positioned for a face turned ~45° right with the neck visible. The canvas is mirrored so displayed and sampled coordinates match.
 4. **Ambient subtraction in linear light.** All values are converted sRGB → linear before the black frame is subtracted. This isolates the screen's contribution from room light and is the core of why this might work at all. Subtracting in gamma space would be wrong.
@@ -41,7 +41,7 @@ In order, as implemented in `takeReading()` and `compute()`:
 
 - **The reading is relative, not absolute.** Without a physical grey card there is no true reference, so exposure is operator-anchored via the admin sliders against a shade verified on real skin. Do not add copy implying lab accuracy.
 - **Ambient correction is unproven.** It is implemented but has never been validated across lighting conditions. If it fails, the honest conclusion is that this needs a physical reference card, not more code.
-- **Auto white balance usually can't be locked on desktop.** Readings taken on a laptop should be treated as less trustworthy than Android Chrome.
+- **Auto white balance and auto exposure run unlocked on every device, by design now.** The channel-gain and ambient-subtraction math is what corrects for this in software; there is no hardware-level lock backing it up. Readings taken under inconsistent or changing lighting mid-sequence are the ones most likely to be wrong.
 - **No face detection.** Zones are fixed fractions with an alignment guide. This was chosen over MediaPipe for reliability and file size. If misalignment turns out to be the dominant error source, that trade is worth revisiting.
 - **The shade library is invented placeholder data**, not measured pigment values.
 

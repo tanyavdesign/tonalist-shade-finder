@@ -96,19 +96,29 @@
   }
   #flash.on{ display:block; }
 
-  /* Small self-view so you can see your framing during the flash
-     sequence, when the full-screen flash would otherwise hide you
-     completely. Kept small on purpose — it's a tiny fraction of screen
-     area, so it barely dents the flash colour reaching your face. */
+  /* Live crops of exactly what's being analysed, shown during the flash
+     sequence only, when the full-screen flash would otherwise hide the
+     face completely. Cropped and mirrored from the same source frame
+     sampleFrame() reads, so what's shown here is what gets measured —
+     not just a face with boxes drawn over it. Kept small on purpose:
+     together they're a small fraction of screen area, so they barely
+     dent the flash colour actually reaching the face.                 */
   #miniPreview{
-    position:fixed; z-index:950; display:none;
-    top:16px; left:50%; transform:translateX(-50%);
-    width:150px; aspect-ratio:3/4; border-radius:10px; overflow:hidden;
+    position:fixed; z-index:950; display:none; flex-direction:column;
+    align-items:center; gap:8px; top:16px; left:50%; transform:translateX(-50%);
+  }
+  #miniPreview.on{ display:flex; }
+  #miniOval{
+    width:130px; height:130px; border-radius:50%; background:#000;
     border:1.5px solid rgba(239,233,225,.55); box-shadow:0 2px 16px rgba(0,0,0,.5);
   }
-  #miniPreview.on{ display:block; }
-  #miniPreview video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
-  #miniGuide{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .miniZones{ display:flex; gap:6px; }
+  .miniZoneBox{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .miniZoneBox canvas{
+    width:58px; height:46px; border-radius:6px; background:#000;
+    border:1px solid rgba(239,233,225,.45);
+  }
+  .miniZoneBox span{ font-size:9px; color:var(--dim); letter-spacing:.02em; }
 
   /* ── results ──────────────────────────────────────────── */
   .result{ display:none; margin-top:var(--stack); }
@@ -174,7 +184,7 @@
 
   <header class="mast">
     <button class="wordmark" id="mark" title="tonalist">tonalist</button>
-    <div class="subline">shade reading<br>build 2026-09-04.4 · research</div>
+    <div class="subline">shade reading<br>build 2026-09-04.5 · research</div>
   </header>
 
   <div class="stage">
@@ -185,8 +195,12 @@
     </div>
   </div>
   <div id="miniPreview">
-    <video id="camMini" playsinline muted autoplay></video>
-    <canvas id="miniGuide"></canvas>
+    <canvas id="miniOval"></canvas>
+    <div class="miniZones">
+      <div class="miniZoneBox"><canvas id="miniZone_highlight"></canvas><span>highlight</span></div>
+      <div class="miniZoneBox"><canvas id="miniZone_midtone"></canvas><span>midtone</span></div>
+      <div class="miniZoneBox"><canvas id="miniZone_shadow"></canvas><span>shadow</span></div>
+    </div>
   </div>
 
   <div class="readout" id="readout">Get close enough that your face fills the frame — the screen is your only light source, and it's weak at arm's length. Turn your head about 45° to the right and include your neck in frame. Find even, indirect light and turn your screen brightness to maximum.</div>
@@ -311,7 +325,7 @@ const FLASHES = [
   { id:"red",     color:"#FF0000", settle:380 },
   { id:"green",   color:"#00FF00", settle:380 },
   { id:"blue",    color:"#0000FF", settle:380 },
-  { id:"warm",    color:"#FFC832", settle:380 },
+  { id:"warm",    color:"#FFE8B8", settle:420 },
   { id:"skinref", color:"#C68642", settle:420 },
 ];
 
@@ -432,7 +446,6 @@ function hexToRgb(h){
 /* ══ state ══════════════════════════════════════════════════════ */
 const el = id => document.getElementById(id);
 const video = el("cam");
-const camMini = el("camMini");
 const work  = document.createElement("canvas");
 const wctx  = work.getContext("2d", { willReadFrequently:true });
 
@@ -473,16 +486,13 @@ async function startCamera(){
     return fail("Camera refused: " + (err.name || err.message) + ". Check the permission for this site.");
   }
   video.srcObject = stream;
-  camMini.srcObject = stream;
   await video.play().catch(()=>{});
-  await camMini.play().catch(()=>{});
   el("empty").style.display = "none";
   el("run").disabled = false;
   el("startCam").disabled = true;
   await lockCamera();
   await lockScreenAwake();
   drawGuide();
-  drawMiniGuide();
   say("Get close — fill the frame with your face. Turn ~45° right, neck in frame, then take the reading. Hold still through the flashes.");
 }
 
@@ -556,8 +566,69 @@ function drawGuideOn(canvasEl, showLabels){
   });
 }
 function drawGuide(){ drawGuideOn(el("guide"), true); }
-function drawMiniGuide(){ drawGuideOn(el("miniGuide"), false); }
-window.addEventListener("resize", () => { if(stream){ drawGuide(); drawMiniGuide(); } });
+window.addEventListener("resize", () => { if(stream) drawGuide(); });
+
+/* ══ crop previews (oval + zone thumbnails, flash-sequence only) ═══
+   Shows exactly what's being analysed — cropped and mirrored the same
+   way sampleFrame() reads it — rather than the whole face with boxes
+   drawn on top. Runs its own low-res mirrored copy of the frame
+   (previewWork) instead of touching `work`, which sampleFrame() is
+   actively writing to mid-sequence; sharing one canvas between a
+   render loop and the sampler would corrupt whichever runs mid-draw. */
+const previewWork = document.createElement("canvas");
+const pctx = previewWork.getContext("2d");
+const PREVIEW_SCALE = 0.35;
+const OVAL_BOUNDS = { x:0.08, y:0.10, w:0.72, h:0.68 }; // bounding box of the guide ellipse (center .44/.44, radii .36/.34)
+let previewRAF = null;
+
+function renderPreviewFrame(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(!vw || !vh) return;
+  const pw = Math.max(1, Math.round(vw*PREVIEW_SCALE)), ph = Math.max(1, Math.round(vh*PREVIEW_SCALE));
+  if(previewWork.width !== pw)  previewWork.width  = pw;
+  if(previewWork.height !== ph) previewWork.height = ph;
+  pctx.save();
+  pctx.translate(pw, 0);
+  pctx.scale(-1, 1);
+  pctx.drawImage(video, 0, 0, pw, ph);
+  pctx.restore();
+
+  drawCrop(el("miniOval"), OVAL_BOUNDS, true);
+  ZONES.forEach(z => drawCrop(el("miniZone_"+z.key), z, false));
+}
+
+function drawCrop(canvasEl, rectFrac, oval){
+  const g = canvasEl.getContext("2d");
+  const sx = rectFrac.x*previewWork.width, sy = rectFrac.y*previewWork.height;
+  const sw = rectFrac.w*previewWork.width, sh = rectFrac.h*previewWork.height;
+  g.clearRect(0,0,canvasEl.width,canvasEl.height);
+  if(oval){
+    g.save();
+    g.beginPath();
+    g.ellipse(canvasEl.width/2, canvasEl.height/2, canvasEl.width/2, canvasEl.height/2, 0, 0, Math.PI*2);
+    g.clip();
+  }
+  g.drawImage(previewWork, sx, sy, sw, sh, 0, 0, canvasEl.width, canvasEl.height);
+  if(oval) g.restore();
+}
+
+/* Fixed internal resolution (2x the CSS size for sharpness); set once
+   when the panel becomes visible rather than every frame — assigning
+   canvas.width/height clears the bitmap, which is wasted work at 30fps. */
+function sizeMiniCanvases(){
+  el("miniOval").width = el("miniOval").height = 260;
+  ZONES.forEach(z => { const c = el("miniZone_"+z.key); c.width = 116; c.height = 92; });
+}
+
+function startPreviewLoop(){
+  sizeMiniCanvases();
+  const tick = () => { renderPreviewFrame(); previewRAF = requestAnimationFrame(tick); };
+  previewRAF = requestAnimationFrame(tick);
+}
+function stopPreviewLoop(){
+  if(previewRAF) cancelAnimationFrame(previewRAF);
+  previewRAF = null;
+}
 
 /* ══ sampling ═══════════════════════════════════════════════════ */
 /* Averages each zone from the current frame. Mirrored to match the
@@ -617,7 +688,7 @@ async function takeReading(){
   const mini  = el("miniPreview");
   flash.classList.add("on");
   mini.classList.add("on");
-  drawMiniGuide(); /* size is 0×0 while display:none, so redraw now that it's visible */
+  startPreviewLoop();
   const samples = {};
 
   for(let i=0;i<FLASHES.length;i++){
@@ -629,6 +700,7 @@ async function takeReading(){
     if(!samples[f.id]){
       flash.classList.remove("on");
       mini.classList.remove("on");
+      stopPreviewLoop();
       running = false;
       el("run").disabled = false;
       return fail("Lost the camera frame partway through. Try again.");
@@ -637,6 +709,7 @@ async function takeReading(){
 
   flash.classList.remove("on");
   mini.classList.remove("on");
+  stopPreviewLoop();
   litSteps(FLASHES.length);
   running = false;
   el("run").disabled = false; el("again").disabled = false;

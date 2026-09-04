@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tonalist — shade reading</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:      #0E0C0B;
+    --surface:  #17130F;
+    --raised:   #221C17;
+    --line:     #322A23;
+    --bone:     #EFE9E1;
+    --muted:    #9A8D80;
+    --dim:      #6B6058;
+    --warn:     #C9743F;
+    --measure:  #6B6058;      /* replaced at runtime by the measured colour */
+    --gutter:   clamp(18px, 5vw, 34px);
+    --stack:    clamp(22px, 5vw, 34px);
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+
+  body{
+    background:var(--ink);
+    color:var(--bone);
+    font-family:"Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    padding:var(--gutter);
+    padding-bottom:80px;
+    display:flex;
+    justify-content:center;
+    min-height:100dvh;
+  }
+
+  .shell{ width:100%; max-width:560px; }
+
+  /* ── masthead ─────────────────────────────────────────── */
+  .mast{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:var(--stack); }
+  .wordmark{
+    font-size:22px; font-weight:500; letter-spacing:-0.03em;
+    background:none; border:0; color:var(--bone); padding:0;
+    font-family:inherit; cursor:pointer; -webkit-tap-highlight-color:transparent;
+  }
+  .wordmark:focus-visible{ outline:2px solid var(--bone); outline-offset:4px; }
+  .subline{ font-size:13px; color:var(--dim); letter-spacing:0.01em; text-align:right; }
+
+  /* ── stage ────────────────────────────────────────────── */
+  .stage{
+    position:relative; width:100%; aspect-ratio:3/4;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:3px; overflow:hidden;
+  }
+  video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; background:var(--surface); }
+  #guide{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+
+  .stage-empty{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; text-align:center;
+    padding:32px; color:var(--muted); font-size:14px;
+  }
+  .stage-empty strong{ color:var(--bone); font-weight:500; display:block; margin-bottom:2px; }
+
+  /* ── readout under stage ──────────────────────────────── */
+  .readout{ margin-top:14px; min-height:44px; font-size:14px; color:var(--muted); }
+  .readout b{ color:var(--bone); font-weight:500; }
+  .readout.alert{ color:var(--warn); }
+
+  .steps{ display:flex; gap:5px; margin-top:12px; }
+  .step{ height:2px; flex:1; background:var(--line); transition:background .18s linear; }
+  .step.lit{ background:var(--bone); }
+
+  /* ── controls ─────────────────────────────────────────── */
+  .controls{ display:flex; flex-wrap:wrap; gap:10px; margin-top:var(--stack); }
+  button.act{
+    font-family:inherit; font-size:15px; font-weight:500; letter-spacing:-0.01em;
+    padding:13px 22px; border-radius:2px; cursor:pointer; border:1px solid var(--bone);
+    background:var(--bone); color:var(--ink); transition:opacity .15s;
+  }
+  button.act.ghost{ background:transparent; color:var(--bone); border-color:var(--line); }
+  button.act:hover:not(:disabled){ opacity:.82; }
+  button.act:disabled{ opacity:.32; cursor:not-allowed; }
+  button.act:focus-visible{ outline:2px solid var(--bone); outline-offset:3px; }
+
+  .note{ font-size:13px; line-height:1.55; color:var(--dim); margin-top:18px; max-width:52ch; }
+
+  /* ── flash overlay ────────────────────────────────────── */
+  #flash{
+    position:fixed; inset:0; z-index:900; display:none; background:#000;
+  }
+  #flash.on{ display:block; }
+
+  /* ── results ──────────────────────────────────────────── */
+  .result{ display:none; margin-top:var(--stack); }
+  .result.on{ display:block; }
+
+  .zones{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); }
+  .zone{ background:var(--ink); padding:14px 12px; }
+  .zone .chip{ width:100%; height:52px; border-radius:2px; margin-bottom:10px; }
+  .zone .zname{ font-size:13px; color:var(--bone); }
+  .zone .zval{ font-size:12px; color:var(--dim); line-height:1.45; margin-top:3px; font-variant-numeric:tabular-nums; }
+
+  .verdict{ margin-top:26px; padding-top:22px; border-top:1px solid var(--line); }
+  .verdict-swatch{ width:100%; height:96px; border-radius:2px; background:var(--measure); }
+  .verdict h2{ font-size:27px; font-weight:500; letter-spacing:-0.03em; margin:18px 0 4px; }
+  .verdict .under{ font-size:15px; color:var(--muted); margin:0; }
+  .verdict .delta{ font-size:13px; color:var(--dim); margin-top:12px; font-variant-numeric:tabular-nums; }
+
+  .alts{ display:flex; gap:8px; margin-top:20px; flex-wrap:wrap; }
+  .alt{ flex:1 1 90px; }
+  .alt .dot{ height:34px; border-radius:2px; }
+  .alt .n{ font-size:12px; color:var(--dim); margin-top:6px; line-height:1.35; }
+
+  .caveat{ font-size:13px; color:var(--dim); margin-top:24px; line-height:1.55; max-width:52ch; }
+
+  /* ── admin ────────────────────────────────────────────── */
+  .admin{ display:none; margin-top:var(--stack); border-top:1px solid var(--line); padding-top:22px; }
+  .admin.on{ display:block; }
+  .admin h3{ font-size:15px; font-weight:500; margin:0 0 4px; }
+  .admin .hint{ font-size:13px; color:var(--dim); margin:0 0 20px; max-width:52ch; line-height:1.55; }
+
+  .slider{ margin-bottom:16px; }
+  .slider .lab{ display:flex; justify-content:space-between; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  .slider .lab span:last-child{ color:var(--bone); font-variant-numeric:tabular-nums; }
+  input[type=range]{ width:100%; accent-color:var(--bone); }
+
+  .refrow{ display:flex; align-items:center; gap:12px; margin:20px 0; flex-wrap:wrap; }
+  input[type=color]{ width:52px; height:38px; padding:0; border:1px solid var(--line); background:var(--raised); border-radius:2px; cursor:pointer; }
+  .ba{ display:flex; gap:1px; flex:1; min-width:170px; background:var(--line); border:1px solid var(--line); }
+  .ba div{ flex:1; height:38px; }
+  .ba .lb{ font-size:11px; color:var(--dim); }
+
+  table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+  th,td{ text-align:left; padding:7px 8px 7px 0; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  th{ color:var(--dim); font-weight:400; }
+  td{ color:var(--muted); }
+  .scroll{ max-height:230px; overflow:auto; }
+
+  pre.diag{
+    font-size:11.5px; line-height:1.6; color:var(--dim); background:var(--surface);
+    border:1px solid var(--line); border-radius:2px; padding:12px; overflow-x:auto; margin-top:8px;
+  }
+  .subhead{ font-size:13px; color:var(--muted); margin:24px 0 0; }
+
+  @media (prefers-reduced-motion: reduce){ *{ transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="mast">
+    <button class="wordmark" id="mark" title="tonalist">tonalist</button>
+    <div class="subline">shade reading<br>v1 · research build</div>
+  </header>
+
+  <div class="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="guide"></canvas>
+    <div class="stage-empty" id="empty">
+      <div><strong>Camera not started</strong>Nothing is recorded or uploaded. Readings stay on this device until you export them.</div>
+    </div>
+  </div>
+
+  <div class="readout" id="readout">Turn your head about 45° to the right and include your neck in frame. Find even, indirect light and turn your screen brightness to maximum.</div>
+  <div class="steps" id="steps"></div>
+
+  <div class="controls">
+    <button class="act" id="startCam">Start camera</button>
+    <button class="act ghost" id="run" disabled>Take reading</button>
+    <button class="act ghost" id="again" disabled>Read again</button>
+  </div>
+
+  <p class="note">
+    The reading uses eight brief full-screen colour flashes, about six seconds in total, to measure how your
+    camera and screen respond before it measures your skin. The screen changes colour slowly rather than
+    strobing. If flashing light is a problem for you, don't run it.
+  </p>
+
+  <section class="result" id="result">
+    <div class="zones" id="zones"></div>
+
+    <div class="verdict">
+      <div class="verdict-swatch" id="vSwatch"></div>
+      <h2 id="vName">—</h2>
+      <p class="under" id="vUnder">—</p>
+      <p class="delta" id="vDelta"></p>
+      <div class="alts" id="alts"></div>
+      <p class="caveat" id="caveat"></p>
+    </div>
+  </section>
+
+  <section class="admin" id="admin">
+    <h3>Calibration</h3>
+    <p class="hint">
+      The reading is relative until it's anchored. Set the reference to a shade you've verified on your own
+      skin, then move the sliders until the corrected swatch matches it. Save the calibration to the link to
+      keep it.
+    </p>
+
+    <div class="slider">
+      <div class="lab"><span>Exposure</span><span id="kOut">1.00</span></div>
+      <input type="range" id="kExp" min="0.3" max="3" step="0.01" value="1">
+    </div>
+    <div class="slider">
+      <div class="lab"><span>Hue shift</span><span id="hOut">0°</span></div>
+      <input type="range" id="hAdj" min="-30" max="30" step="0.5" value="0">
+    </div>
+    <div class="slider">
+      <div class="lab"><span>Saturation</span><span id="sOut">1.00</span></div>
+      <input type="range" id="sAdj" min="0.2" max="2.2" step="0.01" value="1">
+    </div>
+    <div class="slider">
+      <div class="lab"><span>Lightness</span><span id="lOut">1.00</span></div>
+      <input type="range" id="lAdj" min="0.4" max="1.8" step="0.01" value="1">
+    </div>
+
+    <div class="refrow">
+      <input type="color" id="ref" value="#C49A5A" aria-label="Reference colour">
+      <div class="ba">
+        <div id="baRaw" title="Uncalibrated"></div>
+        <div id="baCal" title="Calibrated"></div>
+        <div id="baRef" title="Reference"></div>
+      </div>
+    </div>
+    <div class="lb" style="font-size:11px;color:var(--dim);margin-top:-12px;">uncorrected · corrected · reference</div>
+
+    <div class="controls" style="margin-top:20px">
+      <button class="act ghost" id="saveCal">Save calibration to link</button>
+      <button class="act ghost" id="csv">Export readings</button>
+      <button class="act ghost" id="reset">Reset sliders</button>
+    </div>
+
+    <p class="subhead">Session readings</p>
+    <div class="scroll">
+      <table id="tbl">
+        <thead><tr><th>Time</th><th>Zone</th><th>Hex</th><th>L*</th><th>a*</th><th>b*</th><th>Match</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <p class="subhead">Instrument diagnostics</p>
+    <pre class="diag" id="diag">No reading taken yet.</pre>
+  </section>
+
+</div>
+
+<div id="flash" aria-hidden="true"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   tonalist — shade reading
+   Photometric screen-flash calibration + ΔE2000 shade matching.
+   Single file, no build step, no dependencies, no network calls.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── shade library ─────────────────────────────────────────────── */
+const SHADES = [
+  { name:"Toasted Grain", hex:"#E8C9A0", undertone:"Warm olive"   },
+  { name:"Sunlit Sand",   hex:"#DEBA8A", undertone:"Neutral warm" },
+  { name:"Warm Dune",     hex:"#D4A96A", undertone:"Warm golden"  },
+  { name:"Olive Bloom",   hex:"#C49A5A", undertone:"Olive"        },
+  { name:"Amber Glow",    hex:"#BA8B4A", undertone:"Warm amber"   },
+  { name:"Spiced Honey",  hex:"#A87840", undertone:"Deep warm"    },
+  { name:"Toffee",        hex:"#96653A", undertone:"Neutral warm" },
+  { name:"Mahogany Dusk", hex:"#7A4E2A", undertone:"Deep olive"   },
+  { name:"Rich Umber",    hex:"#5E3820", undertone:"Deep warm"    },
+  { name:"Deep Espresso", hex:"#3D2010", undertone:"Deep neutral" },
+];
+
+/* ── flash sequence ────────────────────────────────────────────────
+   'black' is the ambient baseline. Everything else is subtracted
+   against it so room light is removed from the measurement.        */
+const FLASHES = [
+  { id:"ambient", color:"#000000", settle:600 },
+  { id:"white",   color:"#FFFFFF", settle:420 },
+  { id:"grey",    color:"#808080", settle:380 },
+  { id:"red",     color:"#FF0000", settle:380 },
+  { id:"green",   color:"#00FF00", settle:380 },
+  { id:"blue",    color:"#0000FF", settle:380 },
+  { id:"warm",    color:"#FFC832", settle:380 },
+  { id:"skinref", color:"#C68642", settle:420 },
+];
+
+/* ── sample zones, as fractions of the mirrored frame ──────────────
+   Positioned for a face turned ~45° right with the neck visible.   */
+const ZONES = [
+  { key:"highlight", label:"Highlight", note:"upper cheek",  x:0.33, y:0.35, w:0.13, h:0.10 },
+  { key:"midtone",   label:"Midtone",   note:"jaw to neck",  x:0.50, y:0.55, w:0.14, h:0.11 },
+  { key:"shadow",    label:"Shadow",    note:"outer edge",   x:0.65, y:0.33, w:0.11, h:0.10 },
+];
+
+/* ══ colour maths ═══════════════════════════════════════════════ */
+const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+
+function srgbToLinear(c){ c/=255; return c <= 0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); }
+function linearToSrgb(c){ const v = c <= 0.0031308 ? c*12.92 : 1.055*Math.pow(c, 1/2.4) - 0.055; return clamp(Math.round(v*255), 0, 255); }
+
+function linearToXyz(r,g,b){
+  return [
+    r*0.4124564 + g*0.3575761 + b*0.1804375,
+    r*0.2126729 + g*0.7151522 + b*0.0721750,
+    r*0.0193339 + g*0.1191920 + b*0.9503041,
+  ];
+}
+const WP = [0.95047, 1.00000, 1.08883]; // D65
+function xyzToLab(x,y,z){
+  const f = t => t > 0.008856451 ? Math.cbrt(t) : (7.787037*t) + 16/116;
+  const fx=f(x/WP[0]), fy=f(y/WP[1]), fz=f(z/WP[2]);
+  return [ 116*fy - 16, 500*(fx-fy), 200*(fy-fz) ];
+}
+function rgbToLab(r,g,b){
+  const [x,y,z] = linearToXyz(srgbToLinear(r), srgbToLinear(g), srgbToLinear(b));
+  return xyzToLab(x,y,z);
+}
+
+/* CIEDE2000 — the perceptual distance the match is scored on. */
+function deltaE2000(L1,a1,b1, L2,a2,b2){
+  const rad = Math.PI/180, deg = 180/Math.PI;
+  const C1 = Math.hypot(a1,b1), C2 = Math.hypot(a2,b2);
+  const Cb = (C1+C2)/2;
+  const G  = 0.5*(1 - Math.sqrt(Math.pow(Cb,7)/(Math.pow(Cb,7)+Math.pow(25,7))));
+  const a1p = (1+G)*a1, a2p = (1+G)*a2;
+  const C1p = Math.hypot(a1p,b1), C2p = Math.hypot(a2p,b2);
+  let h1p = Math.atan2(b1,a1p)*deg; if(h1p<0) h1p+=360;
+  let h2p = Math.atan2(b2,a2p)*deg; if(h2p<0) h2p+=360;
+
+  const dLp = L2-L1, dCp = C2p-C1p;
+  let dhp = 0;
+  if(C1p*C2p !== 0){
+    dhp = h2p-h1p;
+    if(dhp >  180) dhp -= 360;
+    if(dhp < -180) dhp += 360;
+  }
+  const dHp = 2*Math.sqrt(C1p*C2p)*Math.sin((dhp/2)*rad);
+
+  const Lbp = (L1+L2)/2, Cbp = (C1p+C2p)/2;
+  let hbp;
+  if(C1p*C2p === 0) hbp = h1p+h2p;
+  else if(Math.abs(h1p-h2p) <= 180) hbp = (h1p+h2p)/2;
+  else hbp = (h1p+h2p < 360) ? (h1p+h2p+360)/2 : (h1p+h2p-360)/2;
+
+  const T = 1 - 0.17*Math.cos((hbp-30)*rad) + 0.24*Math.cos((2*hbp)*rad)
+              + 0.32*Math.cos((3*hbp+6)*rad) - 0.20*Math.cos((4*hbp-63)*rad);
+  const dTh = 30*Math.exp(-Math.pow((hbp-275)/25, 2));
+  const Rc  = 2*Math.sqrt(Math.pow(Cbp,7)/(Math.pow(Cbp,7)+Math.pow(25,7)));
+  const Sl  = 1 + (0.015*Math.pow(Lbp-50,2))/Math.sqrt(20+Math.pow(Lbp-50,2));
+  const Sc  = 1 + 0.045*Cbp;
+  const Sh  = 1 + 0.015*Cbp*T;
+  const Rt  = -Math.sin(2*dTh*rad)*Rc;
+
+  return Math.sqrt(
+    Math.pow(dLp/Sl,2) + Math.pow(dCp/Sc,2) + Math.pow(dHp/Sh,2) +
+    Rt*(dCp/Sc)*(dHp/Sh)
+  );
+}
+
+/* HSL helpers, for the calibration offsets. */
+function rgbToHsl(r,g,b){
+  r/=255; g/=255; b/=255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2;
+  let h=0, s=0;
+  if(mx!==mn){
+    const d=mx-mn;
+    s = l > 0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    if(mx===r) h=((g-b)/d + (g<b?6:0));
+    else if(mx===g) h=((b-r)/d + 2);
+    else h=((r-g)/d + 4);
+    h*=60;
+  }
+  return [h,s,l];
+}
+function hslToRgb(h,s,l){
+  h=((h%360)+360)%360; s=clamp(s,0,1); l=clamp(l,0,1);
+  if(s===0){ const v=Math.round(l*255); return [v,v,v]; }
+  const q = l < 0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+  const f = t => {
+    t=((t%1)+1)%1;
+    if(t < 1/6) return p+(q-p)*6*t;
+    if(t < 1/2) return q;
+    if(t < 2/3) return p+(q-p)*(2/3-t)*6;
+    return p;
+  };
+  const hk=h/360;
+  return [Math.round(f(hk+1/3)*255), Math.round(f(hk)*255), Math.round(f(hk-1/3)*255)];
+}
+const hex = (r,g,b) => "#" + [r,g,b].map(v => clamp(Math.round(v),0,255).toString(16).padStart(2,"0")).join("");
+function hexToRgb(h){
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(h);
+  return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [0,0,0];
+}
+
+/* ══ state ══════════════════════════════════════════════════════ */
+const el = id => document.getElementById(id);
+const video = el("cam");
+const work  = document.createElement("canvas");
+const wctx  = work.getContext("2d", { willReadFrequently:true });
+
+let stream = null;
+let running = false;
+let lastReading = null;      // { zones:{key:{raw,corrected}}, samples, meta }
+const readings = [];         // session log
+let markTaps = 0, markTimer = null;
+
+const cal = { k:1, h:0, s:1, l:1 };
+
+/* ── calibration in the URL, so it survives a reload ───────────── */
+(function loadCal(){
+  const p = new URLSearchParams(location.hash.slice(1));
+  ["k","h","s","l"].forEach(key => {
+    const v = parseFloat(p.get(key));
+    if(!Number.isNaN(v)) cal[key] = v;
+  });
+})();
+
+/* ══ camera ═════════════════════════════════════════════════════ */
+async function startCamera(){
+  if(!navigator.mediaDevices?.getUserMedia){
+    return fail("This browser won't give a page camera access. Try Chrome or Safari.");
+  }
+  if(!window.isSecureContext){
+    return fail("The camera only works over https or on localhost. Opening the file directly won't do it — see the notes below.");
+  }
+  say("Requesting the camera…");
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:"user", width:{ ideal:1280 }, height:{ ideal:1706 } },
+      audio:false
+    });
+  }catch(err){
+    return fail("Camera refused: " + (err.name || err.message) + ". Check the permission for this site.");
+  }
+  video.srcObject = stream;
+  await video.play().catch(()=>{});
+  el("empty").style.display = "none";
+  el("run").disabled = false;
+  el("startCam").disabled = true;
+  await lockCamera();
+  drawGuide();
+  say("Turn ~45° right, neck in frame, then take the reading. Hold still through the flashes.");
+}
+
+/* Auto white balance is the biggest source of error here — it will
+   silently 'correct' the very thing being measured. Lock it if the
+   browser allows, and report honestly when it doesn't.             */
+let lockState = "not attempted";
+async function lockCamera(){
+  const track = stream?.getVideoTracks?.()[0];
+  if(!track?.applyConstraints){ lockState = "unsupported"; return; }
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const want = {};
+  if(caps.whiteBalanceMode?.includes("manual")) want.whiteBalanceMode = "manual";
+  if(caps.exposureMode?.includes("manual"))     want.exposureMode     = "manual";
+  if(caps.focusMode?.includes("continuous"))    want.focusMode        = "continuous";
+  if(!Object.keys(want).length){ lockState = "not offered by this camera"; return; }
+  try{
+    await track.applyConstraints({ advanced:[want] });
+    lockState = "locked: " + Object.keys(want).join(", ");
+  }catch(e){
+    lockState = "lock refused (" + (e.name||"error") + ")";
+  }
+}
+
+/* ══ guide overlay ══════════════════════════════════════════════ */
+function drawGuide(){
+  const c = el("guide"), r = c.getBoundingClientRect();
+  c.width = r.width; c.height = r.height;
+  const g = c.getContext("2d");
+  g.clearRect(0,0,c.width,c.height);
+
+  // face alignment oval, offset left because the head is turned
+  g.strokeStyle = "rgba(239,233,225,0.22)";
+  g.lineWidth = 1;
+  g.beginPath();
+  g.ellipse(c.width*0.46, c.height*0.40, c.width*0.26, c.height*0.26, 0, 0, Math.PI*2);
+  g.stroke();
+
+  ZONES.forEach(z => {
+    const x=z.x*c.width, y=z.y*c.height, w=z.w*c.width, h=z.h*c.height;
+    g.strokeStyle = "rgba(239,233,225,0.75)";
+    g.lineWidth = 1;
+    g.strokeRect(x, y, w, h);
+    g.fillStyle = "rgba(239,233,225,0.75)";
+    g.font = "11px 'Space Grotesk', sans-serif";
+    g.fillText(z.label.toLowerCase(), x, y - 5);
+  });
+}
+window.addEventListener("resize", () => { if(stream) drawGuide(); });
+
+/* ══ sampling ═══════════════════════════════════════════════════ */
+/* Averages each zone from the current frame. Mirrored to match the
+   display, so what she lines up is what gets measured.             */
+function sampleFrame(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(!vw || !vh) return null;
+  work.width = vw; work.height = vh;
+  wctx.save();
+  wctx.translate(vw, 0);
+  wctx.scale(-1, 1);
+  wctx.drawImage(video, 0, 0, vw, vh);
+  wctx.restore();
+
+  const out = {};
+  for(const z of ZONES){
+    const x = Math.round(z.x*vw), y = Math.round(z.y*vh);
+    const w = Math.max(2, Math.round(z.w*vw)), h = Math.max(2, Math.round(z.h*vh));
+    const d = wctx.getImageData(x, y, w, h).data;
+    let r=0,g=0,b=0,n=0;
+    for(let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; n++; }
+    out[z.key] = [r/n, g/n, b/n];
+  }
+  return out;
+}
+
+/* Average several consecutive frames to cut sensor noise. */
+async function sampleAveraged(frames=4, gap=28){
+  const acc = {};
+  ZONES.forEach(z => acc[z.key] = [0,0,0]);
+  let got = 0;
+  for(let i=0;i<frames;i++){
+    const s = sampleFrame();
+    if(s){ ZONES.forEach(z => { for(let c=0;c<3;c++) acc[z.key][c] += s[z.key][c]; }); got++; }
+    await wait(gap);
+  }
+  if(!got) return null;
+  ZONES.forEach(z => { for(let c=0;c<3;c++) acc[z.key][c] /= got; });
+  return acc;
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+/* ══ the reading ════════════════════════════════════════════════ */
+async function takeReading(){
+  if(running) return;
+  running = true;
+  el("run").disabled = true; el("again").disabled = true;
+  el("result").classList.remove("on");
+  buildSteps();
+
+  const flash = el("flash");
+  flash.classList.add("on");
+  const samples = {};
+
+  for(let i=0;i<FLASHES.length;i++){
+    const f = FLASHES[i];
+    flash.style.background = f.color;
+    litSteps(i);
+    await wait(f.settle);
+    samples[f.id] = await sampleAveraged();
+    if(!samples[f.id]){
+      flash.classList.remove("on");
+      running = false;
+      el("run").disabled = false;
+      return fail("Lost the camera frame partway through. Try again.");
+    }
+  }
+
+  flash.classList.remove("on");
+  litSteps(FLASHES.length);
+  running = false;
+  el("run").disabled = false; el("again").disabled = false;
+
+  compute(samples);
+}
+
+function compute(samples){
+  const meta = { warnings:[], lock:lockState, at:new Date() };
+  const zoneOut = {};
+
+  /* Per-channel camera gains, estimated from the pure R/G/B flashes.
+     Each flash drives one channel; comparing how strongly the sensor
+     answers gives a diagonal correction for channel sensitivity.    */
+  const gains = channelGains(samples, meta);
+
+  for(const z of ZONES){
+    const amb   = samples.ambient[z.key].map(srgbToLinear);
+    const white = samples.white[z.key].map(srgbToLinear);
+
+    // Ambient subtraction: what the screen alone put on the skin.
+    const sig = white.map((v,i) => Math.max(0, v - amb[i]));
+    const energy = sig[0]+sig[1]+sig[2];
+
+    // Quality gates, reported rather than silently swallowed.
+    const ambEnergy = amb[0]+amb[1]+amb[2];
+    if(energy < 0.04) meta.warnings.push(z.label + ": barely any signal — move closer, or raise screen brightness.");
+    if(ambEnergy > energy*1.6) meta.warnings.push(z.label + ": room light is stronger than the screen — dim the room.");
+
+    // Apply channel gains, then exposure scaling.
+    const corrected = sig.map((v,i) => v * gains[i] * cal.k);
+    const rawRgb = sig.map(v => linearToSrgb(v * cal.k));
+    let calRgb   = corrected.map(linearToSrgb);
+
+    // Operator calibration (hue / sat / light), anchoring to a known shade.
+    let [h,s,l] = rgbToHsl(...calRgb);
+    calRgb = hslToRgb(h + cal.h, s * cal.s, l * cal.l);
+
+    const lab = rgbToLab(...calRgb);
+    zoneOut[z.key] = {
+      label:z.label, note:z.note,
+      raw:rawRgb, rgb:calRgb, hex:hex(...calRgb), lab,
+      energy, ambEnergy
+    };
+  }
+
+  /* The midtone is the shade-matching zone — jaw into neck is the
+     standard reference for foundation, away from blush and shadow. */
+  const anchor = zoneOut.midtone;
+  const ranked = SHADES
+    .map(s => {
+      const [L,a,b] = rgbToLab(...hexToRgb(s.hex));
+      return { ...s, dE: deltaE2000(anchor.lab[0], anchor.lab[1], anchor.lab[2], L, a, b) };
+    })
+    .sort((x,y) => x.dE - y.dE);
+
+  lastReading = { zones:zoneOut, ranked, samples, gains, meta };
+  readings.push({
+    t: meta.at.toLocaleTimeString(),
+    iso: meta.at.toISOString(),
+    zones: zoneOut,
+    match: ranked[0].name,
+    dE: ranked[0].dE
+  });
+
+  render();
+}
+
+function channelGains(samples, meta){
+  // Use the midtone zone; it has the most stable illumination.
+  const amb = samples.ambient.midtone.map(srgbToLinear);
+  const read = id => samples[id].midtone.map((v,i) => Math.max(0, srgbToLinear(v) - amb[i]));
+  const r = read("red"), g = read("green"), b = read("blue");
+  const resp = [ r[0], g[1], b[2] ];              // each channel under its own flash
+  if(resp.some(v => v < 0.006)){
+    meta.warnings.push("Channel response too faint to correct for sensor bias — using neutral gains.");
+    return [1,1,1];
+  }
+  const geo = Math.cbrt(resp[0]*resp[1]*resp[2]); // normalise so gains average to 1
+  return resp.map(v => clamp(geo / v, 0.5, 2.0));
+}
+
+/* ══ render ═════════════════════════════════════════════════════ */
+function render(){
+  if(!lastReading) return;
+  const { zones, ranked, meta } = lastReading;
+
+  el("zones").innerHTML = ZONES.map(z => {
+    const d = zones[z.key];
+    return `<div class="zone">
+      <div class="chip" style="background:${d.hex}"></div>
+      <div class="zname">${d.label}</div>
+      <div class="zval">${d.note}<br>${d.hex}<br>L* ${d.lab[0].toFixed(1)}</div>
+    </div>`;
+  }).join("");
+
+  const top = ranked[0];
+  document.documentElement.style.setProperty("--measure", zones.midtone.hex);
+  el("vSwatch").style.background = zones.midtone.hex;
+  el("vName").textContent = top.name;
+  el("vUnder").textContent = top.undertone + " · matched on the jaw-to-neck reading";
+  el("vDelta").textContent =
+    `ΔE₀₀ ${top.dE.toFixed(1)} · L* ${zones.midtone.lab[0].toFixed(1)} ` +
+    `a* ${zones.midtone.lab[1].toFixed(1)} b* ${zones.midtone.lab[2].toFixed(1)}`;
+
+  el("alts").innerHTML = ranked.slice(1,4).map(s =>
+    `<div class="alt"><div class="dot" style="background:${s.hex}"></div>
+     <div class="n">${s.name}<br>ΔE ${s.dE.toFixed(1)}</div></div>`
+  ).join("");
+
+  let cav = top.dE < 2
+    ? "Under ΔE 2 the difference is close to invisible to the eye."
+    : top.dE < 5
+      ? "ΔE between 2 and 5 is a visible but wearable difference."
+      : "ΔE above 5 means nothing in this library is genuinely close to you — which is the point the brand is making.";
+  if(meta.warnings.length) cav += " " + meta.warnings.join(" ");
+  el("caveat").textContent = cav;
+
+  el("result").classList.add("on");
+  say(meta.warnings.length ? "Reading taken, with conditions worth fixing." : "Reading taken.", meta.warnings.length>0);
+  refreshAdmin();
+}
+
+/* ══ admin ══════════════════════════════════════════════════════ */
+el("mark").addEventListener("click", () => {
+  markTaps++;
+  clearTimeout(markTimer);
+  markTimer = setTimeout(() => markTaps = 0, 1200);
+  if(markTaps >= 5){
+    markTaps = 0;
+    const a = el("admin");
+    a.classList.toggle("on");
+    if(a.classList.contains("on")){ refreshAdmin(); a.scrollIntoView({ behavior:"smooth" }); }
+  }
+});
+
+function bindSlider(inputId, key, outId, fmt){
+  const input = el(inputId);
+  input.value = cal[key];
+  el(outId).textContent = fmt(cal[key]);
+  input.addEventListener("input", () => {
+    cal[key] = parseFloat(input.value);
+    el(outId).textContent = fmt(cal[key]);
+    if(lastReading) compute(lastReading.samples); else refreshAdmin();
+  });
+}
+bindSlider("kExp","k","kOut", v => v.toFixed(2));
+bindSlider("hAdj","h","hOut", v => v.toFixed(1) + "°");
+bindSlider("sAdj","s","sOut", v => v.toFixed(2));
+bindSlider("lAdj","l","lOut", v => v.toFixed(2));
+
+el("ref").addEventListener("input", refreshAdmin);
+
+el("reset").addEventListener("click", () => {
+  Object.assign(cal, { k:1, h:0, s:1, l:1 });
+  el("kExp").value=1; el("hAdj").value=0; el("sAdj").value=1; el("lAdj").value=1;
+  el("kOut").textContent="1.00"; el("hOut").textContent="0.0°";
+  el("sOut").textContent="1.00"; el("lOut").textContent="1.00";
+  if(lastReading) compute(lastReading.samples); else refreshAdmin();
+});
+
+el("saveCal").addEventListener("click", () => {
+  location.hash = new URLSearchParams({
+    k:cal.k.toFixed(3), h:cal.h.toFixed(2), s:cal.s.toFixed(3), l:cal.l.toFixed(3)
+  }).toString();
+  el("saveCal").textContent = "Saved to link";
+  setTimeout(() => el("saveCal").textContent = "Save calibration to link", 1600);
+});
+
+function refreshAdmin(){
+  const refHex = el("ref").value;
+  el("baRef").style.background = refHex;
+  if(lastReading){
+    el("baRaw").style.background = hex(...lastReading.zones.midtone.raw);
+    el("baCal").style.background = lastReading.zones.midtone.hex;
+  }
+
+  const tb = el("tbl").querySelector("tbody");
+  tb.innerHTML = readings.flatMap(r =>
+    ZONES.map(z => {
+      const d = r.zones[z.key];
+      return `<tr><td>${r.t}</td><td>${d.label}</td><td>${d.hex}</td>
+        <td>${d.lab[0].toFixed(1)}</td><td>${d.lab[1].toFixed(1)}</td>
+        <td>${d.lab[2].toFixed(1)}</td><td>${r.match}</td></tr>`;
+    })
+  ).join("") || `<tr><td colspan="7" style="color:var(--dim)">No readings yet.</td></tr>`;
+
+  el("diag").textContent = lastReading ? diagText() : "No reading taken yet.";
+}
+
+function diagText(){
+  const { samples, gains, meta, zones } = lastReading;
+  const rows = FLASHES.map(f => {
+    const v = samples[f.id].midtone.map(n => n.toFixed(0).padStart(3));
+    return `  ${f.id.padEnd(8)} ${v.join("  ")}`;
+  }).join("\n");
+  return [
+    `camera control   ${meta.lock}`,
+    `resolution       ${video.videoWidth}×${video.videoHeight}`,
+    `channel gains    ${gains.map(g => g.toFixed(3)).join("  ")}`,
+    `calibration      k ${cal.k.toFixed(2)}  h ${cal.h.toFixed(1)}  s ${cal.s.toFixed(2)}  l ${cal.l.toFixed(2)}`,
+    ``,
+    `raw midtone sample per flash (R G B, 0–255)`,
+    rows,
+    ``,
+    `signal energy    ${zones.midtone.energy.toFixed(4)} (screen)`,
+    `ambient energy   ${zones.midtone.ambEnergy.toFixed(4)} (room)`,
+    meta.warnings.length ? `\nwarnings\n  ` + meta.warnings.join("\n  ") : `\nno warnings`
+  ].join("\n");
+}
+
+el("csv").addEventListener("click", () => {
+  if(!readings.length) return;
+  const head = ["timestamp","zone","hex","R","G","B","L","a","b","match","deltaE","cal_k","cal_h","cal_s","cal_l"];
+  const rows = readings.flatMap(r => ZONES.map(z => {
+    const d = r.zones[z.key];
+    return [ r.iso, d.label, d.hex, ...d.rgb.map(Math.round), ...d.lab.map(v => v.toFixed(2)),
+             r.match, r.dE.toFixed(2), cal.k, cal.h, cal.s, cal.l ].join(",");
+  }));
+  const blob = new Blob([[head.join(","), ...rows].join("\n")], { type:"text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "shade-readings-" + new Date().toISOString().slice(0,10) + ".csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ══ chrome ═════════════════════════════════════════════════════ */
+function buildSteps(){
+  el("steps").innerHTML = FLASHES.map(() => `<div class="step"></div>`).join("");
+}
+function litSteps(n){
+  [...el("steps").children].forEach((s,i) => s.classList.toggle("lit", i < n));
+}
+function say(msg, alert=false){
+  const r = el("readout");
+  r.textContent = msg;
+  r.classList.toggle("alert", alert);
+}
+function fail(msg){ say(msg, true); }
+
+el("startCam").addEventListener("click", startCamera);
+el("run").addEventListener("click", takeReading);
+el("again").addEventListener("click", takeReading);
+buildSteps();
+</script>
+</body>
+</html>

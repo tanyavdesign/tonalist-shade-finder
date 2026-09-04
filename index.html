@@ -90,6 +90,13 @@
 
   .note{ font-size:13px; line-height:1.55; color:var(--dim); margin-top:18px; max-width:52ch; }
 
+  .locRow{ display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  #locSelect, #locCustom{
+    font-family:inherit; font-size:14px; padding:10px 12px; border-radius:2px;
+    border:1px solid var(--line); background:var(--raised); color:var(--bone); flex:1; min-width:150px;
+  }
+  #locSelect:focus-visible, #locCustom:focus-visible{ outline:2px solid var(--bone); outline-offset:2px; }
+
   /* ── flash overlay ────────────────────────────────────── */
   #flash{
     position:fixed; inset:0; z-index:900; display:none; background:#000;
@@ -177,7 +184,7 @@
 
   <header class="mast">
     <button class="wordmark" id="mark" title="tonalist">tonalist</button>
-    <div class="subline">shade reading<br>build 2026-09-04.6 · research</div>
+    <div class="subline">shade reading<br>build 2026-09-04.7 · research</div>
   </header>
 
   <div class="stage">
@@ -194,6 +201,20 @@
 
   <div class="readout" id="readout">Hold a patch of clear, bare skin — cheek, jaw, neck, inner arm, wherever — inside the box, close enough that skin fills it completely with no hair or background inside it. The screen is your only light source and it's weak at arm's length, so get close. Find even, indirect light and turn your screen brightness to maximum.</div>
   <div class="steps" id="steps"></div>
+
+  <div class="locRow">
+    <select id="locSelect" aria-label="Where on the body is this sample from?">
+      <option>Front cheek</option>
+      <option>Side cheek</option>
+      <option>Forehead</option>
+      <option>Chin</option>
+      <option>Around mouth</option>
+      <option>Neck</option>
+      <option>Chest</option>
+      <option value="__custom">+ Add custom…</option>
+    </select>
+    <input type="text" id="locCustom" placeholder="Name this spot, then press Enter" style="display:none">
+  </div>
 
   <div class="controls">
     <button class="act" id="startCam">Start camera</button>
@@ -272,7 +293,7 @@
     <p class="subhead">Session readings</p>
     <div class="scroll">
       <table id="tbl">
-        <thead><tr><th>Time</th><th>Zone</th><th>Hex</th><th>L*</th><th>a*</th><th>b*</th><th>Match</th></tr></thead>
+        <thead><tr><th>Time</th><th>Location</th><th>Hex</th><th>L*</th><th>a*</th><th>b*</th><th>Match</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -358,6 +379,26 @@ function xyzToLab(x,y,z){
 function rgbToLab(r,g,b){
   const [x,y,z] = linearToXyz(srgbToLinear(r), srgbToLinear(g), srgbToLinear(b));
   return xyzToLab(x,y,z);
+}
+
+/* Inverse of the two functions above — needed to turn an averaged Lab
+   value (multiple samples blended together) back into a displayable
+   swatch. Mirrors rgbToLab's own matrix/white-point exactly so a
+   round-trip rgbToLab(labToRgb(...)) comes back unchanged.            */
+function labToXyz(L,a,b){
+  const fy = (L+16)/116, fx = fy + a/500, fz = fy - b/200;
+  const finv = t => (t*t*t > 0.008856451) ? t*t*t : (t - 16/116)/7.787037;
+  return [ finv(fx)*WP[0], finv(fy)*WP[1], finv(fz)*WP[2] ];
+}
+function xyzToLinear(x,y,z){
+  return [
+     x* 3.2404542 + y*-1.5371385 + z*-0.4985314,
+     x*-0.9692660 + y* 1.8760108 + z* 0.0415560,
+     x* 0.0556434 + y*-0.2040259 + z* 1.0572252,
+  ];
+}
+function labToRgb(L,a,b){
+  return xyzToLinear(...labToXyz(L,a,b)).map(linearToSrgb);
 }
 
 /* CIEDE2000 — the perceptual distance the match is scored on. */
@@ -752,7 +793,8 @@ function compute(samples){
     iso: meta.at.toISOString(),
     zones: zoneOut,
     match: ranked[0].name,
-    dE: ranked[0].dE
+    dE: ranked[0].dE,
+    location: currentLocation()
   });
 
   render();
@@ -805,15 +847,15 @@ function calibrationGains(samples, meta){
 /* ══ render ═════════════════════════════════════════════════════ */
 function render(){
   if(!lastReading) return;
-  const { zones, ranked, meta } = lastReading;
-
+  const { zones, meta } = lastReading;
   const d = zones.patch;
-  if(d.lowSignal){
-    /* A near-zero signal is mostly sensor noise. A fixed gain still scales
-       that noise up into a fully saturated colour, which looks exactly as
-       confident on screen as a real reading — the opposite of the honesty
-       this instrument is supposed to have. Flag it instead of hiding it
-       behind a plausible-looking swatch. */
+  const overall = computeOverall();
+
+  /* Headline is the blend across every good sample, not just this one
+     capture — a single reading can be thrown off by a moment of
+     ambient-light contamination in its own calibration flashes (see
+     CLAUDE.md); averaging several is what actually cancels that out. */
+  if(!overall){
     document.documentElement.style.setProperty("--measure", "var(--line)");
     el("vSwatch").style.background = "var(--line)";
     el("vName").textContent = "Insufficient signal";
@@ -821,40 +863,42 @@ function render(){
     el("vDelta").textContent = "";
     el("alts").innerHTML = "";
   } else {
-    const top = ranked[0];
-    document.documentElement.style.setProperty("--measure", d.hex);
-    el("vSwatch").style.background = d.hex;
+    const top = overall.ranked[0];
+    document.documentElement.style.setProperty("--measure", overall.hex);
+    el("vSwatch").style.background = overall.hex;
     el("vName").textContent = top.name;
-    el("vUnder").textContent = top.undertone + " · matched on this sample";
+    el("vUnder").textContent = top.undertone + ` · averaged from ${overall.n} sample${overall.n===1?"":"s"}`
+      + (overall.excluded ? ` (${overall.excluded} excluded — insufficient signal)` : "");
     el("vDelta").textContent =
-      `ΔE₀₀ ${top.dE.toFixed(1)} · L* ${d.lab[0].toFixed(1)} ` +
-      `a* ${d.lab[1].toFixed(1)} b* ${d.lab[2].toFixed(1)}`;
-    el("alts").innerHTML = ranked.slice(1,4).map(s =>
+      `ΔE₀₀ ${top.dE.toFixed(1)} · L* ${overall.lab[0].toFixed(1)} ` +
+      `a* ${overall.lab[1].toFixed(1)} b* ${overall.lab[2].toFixed(1)}`;
+    el("alts").innerHTML = overall.ranked.slice(1,4).map(s =>
       `<div class="alt"><div class="dot" style="background:${s.hex}"></div>
        <div class="n">${s.name}<br>ΔE ${s.dE.toFixed(1)}</div></div>`
     ).join("");
   }
 
-  let cav = d.lowSignal ? "" :
-    ranked[0].dE < 2
+  let cav = !overall ? "" :
+    overall.ranked[0].dE < 2
       ? "Under ΔE 2 the difference is close to invisible to the eye."
-      : ranked[0].dE < 5
+      : overall.ranked[0].dE < 5
         ? "ΔE between 2 and 5 is a visible but wearable difference."
         : "ΔE above 5 means nothing in this library is genuinely close to you — which is the point the brand is making.";
+  if(overall && overall.n < 3) cav += (cav ? " " : "") + "Three or more samples from different spots make this average much more reliable than it is right now.";
   if(meta.warnings.length) cav += (cav ? " " : "") + meta.warnings.join(" ");
   el("caveat").textContent = cav;
 
-  /* Every capture — not just the latest — since the whole point of a
-     single re-placeable patch zone is taking as many samples as wanted
-     (different spots, lighting checks, repeatability tests). readings[]
-     already accumulates every reading taken this session; just surface
-     it here instead of only in the admin panel's export.               */
+  /* Every individual capture, not just the blend — so a reading that
+     looks nothing like the others (the purple one) is visible and can
+     be judged, not silently absorbed into an average with no evidence
+     it happened. readings[] already accumulates these for CSV export;
+     surfaced here too instead of only in the admin panel.             */
   el("galleryHead").textContent = `Samples this session (${readings.length})`;
   el("gallery").innerHTML = readings.slice().reverse().map(r => {
     const p = r.zones.patch;
     return `<div class="galleryItem" title="${r.t}">
       <div class="gdot${p.lowSignal ? " g-empty" : ""}" ${p.lowSignal ? "" : `style="background:${p.hex}"`}></div>
-      <div class="gn">${p.lowSignal ? "no signal" : r.match}<br>${p.lowSignal ? "" : "ΔE "+r.dE.toFixed(1)}</div>
+      <div class="gn">${r.location || "—"}<br>${p.lowSignal ? "no signal" : "ΔE "+r.dE.toFixed(1)}</div>
     </div>`;
   }).join("");
 
@@ -918,14 +962,12 @@ function refreshAdmin(){
   }
 
   const tb = el("tbl").querySelector("tbody");
-  tb.innerHTML = readings.flatMap(r =>
-    ZONES.map(z => {
-      const d = r.zones[z.key];
-      return `<tr><td>${r.t}</td><td>${d.label}</td><td>${d.hex}</td>
-        <td>${d.lab[0].toFixed(1)}</td><td>${d.lab[1].toFixed(1)}</td>
-        <td>${d.lab[2].toFixed(1)}</td><td>${r.match}</td></tr>`;
-    })
-  ).join("") || `<tr><td colspan="7" style="color:var(--dim)">No readings yet.</td></tr>`;
+  tb.innerHTML = readings.map(r => {
+    const d = r.zones.patch;
+    return `<tr><td>${r.t}</td><td>${r.location||"—"}</td><td>${d.hex}</td>
+      <td>${d.lab[0].toFixed(1)}</td><td>${d.lab[1].toFixed(1)}</td>
+      <td>${d.lab[2].toFixed(1)}</td><td>${r.match}</td></tr>`;
+  }).join("") || `<tr><td colspan="7" style="color:var(--dim)">No readings yet.</td></tr>`;
 
   el("diag").textContent = lastReading ? diagText() : "No reading taken yet.";
 }
@@ -954,12 +996,13 @@ function diagText(){
 
 el("csv").addEventListener("click", () => {
   if(!readings.length) return;
-  const head = ["timestamp","zone","hex","R","G","B","L","a","b","match","deltaE","cal_k","cal_h","cal_s","cal_l"];
-  const rows = readings.flatMap(r => ZONES.map(z => {
-    const d = r.zones[z.key];
-    return [ r.iso, d.label, d.hex, ...d.rgb.map(Math.round), ...d.lab.map(v => v.toFixed(2)),
-             r.match, r.dE.toFixed(2), cal.k, cal.h, cal.s, cal.l ].join(",");
-  }));
+  const csvField = v => `"${String(v).replace(/"/g,'""')}"`; // location is free text and may contain commas
+  const head = ["timestamp","location","hex","R","G","B","L","a","b","match","deltaE","cal_k","cal_h","cal_s","cal_l"];
+  const rows = readings.map(r => {
+    const d = r.zones.patch;
+    return [ r.iso, csvField(r.location), d.hex, ...d.rgb.map(Math.round), ...d.lab.map(v => v.toFixed(2)),
+             csvField(r.match), r.dE.toFixed(2), cal.k, cal.h, cal.s, cal.l ].join(",");
+  });
   const blob = new Blob([[head.join(","), ...rows].join("\n")], { type:"text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -981,6 +1024,60 @@ function say(msg, alert=false){
   r.classList.toggle("alert", alert);
 }
 function fail(msg){ say(msg, true); }
+
+/* ══ sample location tagging ═══════════════════════════════════════
+   Free-text labels ("front cheek", "chest", whatever) so a growing
+   list of samples stays meaningful instead of just "Sample 1, 2, 3".
+   Custom entries live only in this <select> for the session — nothing
+   persists past a reload, consistent with readings themselves.       */
+function currentLocation(){
+  const sel = el("locSelect");
+  if(sel.value !== "__custom") return sel.value;
+  return el("locCustom").value.trim() || "Unlabeled";
+}
+el("locSelect").addEventListener("change", () => {
+  const isCustom = el("locSelect").value === "__custom";
+  el("locCustom").style.display = isCustom ? "block" : "none";
+  if(isCustom) el("locCustom").focus();
+});
+function commitCustomLocation(){
+  const val = el("locCustom").value.trim();
+  if(!val) return;
+  const sel = el("locSelect");
+  const opt = document.createElement("option");
+  opt.value = val; opt.textContent = val;
+  sel.insertBefore(opt, sel.querySelector('option[value="__custom"]'));
+  sel.value = val;
+  el("locCustom").value = "";
+  el("locCustom").style.display = "none";
+}
+el("locCustom").addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); commitCustomLocation(); } });
+el("locCustom").addEventListener("blur", commitCustomLocation);
+
+/* ══ overall (blended) result ═══════════════════════════════════════
+   Any single capture can be thrown off by one bad moment of ambient
+   light contaminating that capture's own calibration flashes (this is
+   how a genuinely brown patch of skin came back purple once — see
+   CLAUDE.md). Averaging Lab across every good sample this session is
+   far more robust than trusting any one of them alone, which is the
+   actual point of letting the user take as many samples as they want
+   rather than just one. Low-signal samples are excluded entirely —
+   averaging in noise doesn't cancel it out, it just dilutes it.       */
+function computeOverall(){
+  const valid = readings.filter(r => !r.zones.patch.lowSignal);
+  if(!valid.length) return null;
+  const lab = [0,0,0];
+  valid.forEach(r => { const l = r.zones.patch.lab; lab[0]+=l[0]; lab[1]+=l[1]; lab[2]+=l[2]; });
+  lab[0]/=valid.length; lab[1]/=valid.length; lab[2]/=valid.length;
+  const rgb = labToRgb(...lab);
+  const ranked = SHADES
+    .map(s => {
+      const [L,a,b] = rgbToLab(...hexToRgb(s.hex));
+      return { ...s, dE: deltaE2000(lab[0],lab[1],lab[2], L,a,b) };
+    })
+    .sort((x,y) => x.dE - y.dE);
+  return { lab, hex: hex(...rgb), ranked, n: valid.length, excluded: readings.length - valid.length };
+}
 
 el("startCam").addEventListener("click", startCamera);
 el("run").addEventListener("click", takeReading);

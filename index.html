@@ -96,6 +96,19 @@
   }
   #flash.on{ display:block; }
 
+  /* Small self-view so you can see your framing during the flash
+     sequence, when the full-screen flash would otherwise hide you
+     completely. Kept small on purpose — it's a tiny fraction of screen
+     area, so it barely dents the flash colour reaching your face. */
+  #miniPreview{
+    position:fixed; z-index:950; display:none;
+    top:16px; left:50%; transform:translateX(-50%);
+    width:88px; aspect-ratio:3/4; border-radius:10px; overflow:hidden;
+    border:1.5px solid rgba(239,233,225,.55); box-shadow:0 2px 16px rgba(0,0,0,.5);
+  }
+  #miniPreview.on{ display:block; }
+  #miniPreview video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
+
   /* ── results ──────────────────────────────────────────── */
   .result{ display:none; margin-top:var(--stack); }
   .result.on{ display:block; }
@@ -166,8 +179,9 @@
       <div><strong>Camera not started</strong>Nothing is recorded or uploaded. Readings stay on this device until you export them.</div>
     </div>
   </div>
+  <div id="miniPreview"><video id="camMini" playsinline muted autoplay></video></div>
 
-  <div class="readout" id="readout">Turn your head about 45° to the right and include your neck in frame. Find even, indirect light and turn your screen brightness to maximum.</div>
+  <div class="readout" id="readout">Get close enough that your face fills the frame — the screen is your only light source, and it's weak at arm's length. Turn your head about 45° to the right and include your neck in frame. Find even, indirect light and turn your screen brightness to maximum.</div>
   <div class="steps" id="steps"></div>
 
   <div class="controls">
@@ -404,6 +418,7 @@ function hexToRgb(h){
 /* ══ state ══════════════════════════════════════════════════════ */
 const el = id => document.getElementById(id);
 const video = el("cam");
+const camMini = el("camMini");
 const work  = document.createElement("canvas");
 const wctx  = work.getContext("2d", { willReadFrequently:true });
 
@@ -444,14 +459,16 @@ async function startCamera(){
     return fail("Camera refused: " + (err.name || err.message) + ". Check the permission for this site.");
   }
   video.srcObject = stream;
+  camMini.srcObject = stream;
   await video.play().catch(()=>{});
+  await camMini.play().catch(()=>{});
   el("empty").style.display = "none";
   el("run").disabled = false;
   el("startCam").disabled = true;
   await lockCamera();
   await lockScreenAwake();
   drawGuide();
-  say("Turn ~45° right, neck in frame, then take the reading. Hold still through the flashes.");
+  say("Get close — fill the frame with your face. Turn ~45° right, neck in frame, then take the reading. Hold still through the flashes.");
 }
 
 /* There is no web API to raise a device's actual display brightness —
@@ -574,7 +591,9 @@ async function takeReading(){
   buildSteps();
 
   const flash = el("flash");
+  const mini  = el("miniPreview");
   flash.classList.add("on");
+  mini.classList.add("on");
   const samples = {};
 
   for(let i=0;i<FLASHES.length;i++){
@@ -585,6 +604,7 @@ async function takeReading(){
     samples[f.id] = await sampleAveraged();
     if(!samples[f.id]){
       flash.classList.remove("on");
+      mini.classList.remove("on");
       running = false;
       el("run").disabled = false;
       return fail("Lost the camera frame partway through. Try again.");
@@ -592,6 +612,7 @@ async function takeReading(){
   }
 
   flash.classList.remove("on");
+  mini.classList.remove("on");
   litSteps(FLASHES.length);
   running = false;
   el("run").disabled = false; el("again").disabled = false;
@@ -608,6 +629,15 @@ function compute(samples){
      answers gives a diagonal correction for channel sensitivity.    */
   const gains = channelGains(samples, meta);
 
+  /* The "skin reference" flash was being sampled and then never used —
+     the pipeline had no ground truth for what the screen's own "white"
+     actually looks like once emitted and shot through the camera. Phone
+     screens (OLED especially) commonly skew cool/blue at max brightness,
+     and per-channel sensor gains above correct camera sensitivity, not
+     that. Comparing the skinref flash's measured response against its
+     known colour gives a real target to correct against. */
+  const refGains = referenceGains(samples, gains, meta);
+
   for(const z of ZONES){
     const amb   = samples.ambient[z.key].map(srgbToLinear);
     const white = samples.white[z.key].map(srgbToLinear);
@@ -621,8 +651,8 @@ function compute(samples){
     if(energy < 0.04) meta.warnings.push(z.label + ": barely any signal — move closer, or raise screen brightness.");
     if(ambEnergy > energy*1.6) meta.warnings.push(z.label + ": room light is stronger than the screen — dim the room.");
 
-    // Apply channel gains, then exposure scaling.
-    const corrected = sig.map((v,i) => v * gains[i] * cal.k);
+    // Apply channel gains, the reference correction, then exposure scaling.
+    const corrected = sig.map((v,i) => v * gains[i] * refGains[i] * cal.k);
     const rawRgb = sig.map(v => linearToSrgb(v * cal.k));
     let calRgb   = corrected.map(linearToSrgb);
 
@@ -648,7 +678,7 @@ function compute(samples){
     })
     .sort((x,y) => x.dE - y.dE);
 
-  lastReading = { zones:zoneOut, ranked, samples, gains, meta };
+  lastReading = { zones:zoneOut, ranked, samples, gains, refGains, meta };
   readings.push({
     t: meta.at.toLocaleTimeString(),
     iso: meta.at.toISOString(),
@@ -672,6 +702,25 @@ function channelGains(samples, meta){
   }
   const geo = Math.cbrt(resp[0]*resp[1]*resp[2]); // normalise so gains average to 1
   return resp.map(v => clamp(geo / v, 0.5, 2.0));
+}
+
+/* The skinref flash (#C68642) is a known colour shone at the same skin
+   the white flash measures. Ambient-subtract and channel-gain-correct
+   it the same way as any other zone, then compare the result to what
+   that known colour should linearize to. The ratio is what the white
+   flash's own colour cast (screen emission, not sensor) was missing. */
+function referenceGains(samples, gains, meta){
+  const amb = samples.ambient.midtone.map(srgbToLinear);
+  const observed = samples.skinref.midtone.map((v,i) =>
+    Math.max(0, srgbToLinear(v) - amb[i]) * gains[i]);
+  const expected = hexToRgb("#C68642").map(srgbToLinear);
+  if(observed.some(v => v < 0.006)){
+    meta.warnings.push("Skin-reference flash too faint to correct screen colour cast — using neutral reference gains.");
+    return [1,1,1];
+  }
+  const raw = expected.map((v,i) => v / observed[i]);
+  const geo = Math.cbrt(raw[0]*raw[1]*raw[2]); // normalise so gains average to 1, same as channelGains
+  return raw.map(v => clamp(v / geo, 0.5, 2.0));
 }
 
 /* ══ render ═════════════════════════════════════════════════════ */
@@ -783,7 +832,7 @@ function refreshAdmin(){
 }
 
 function diagText(){
-  const { samples, gains, meta, zones } = lastReading;
+  const { samples, gains, refGains, meta, zones } = lastReading;
   const rows = FLASHES.map(f => {
     const v = samples[f.id].midtone.map(n => n.toFixed(0).padStart(3));
     return `  ${f.id.padEnd(8)} ${v.join("  ")}`;
@@ -793,6 +842,7 @@ function diagText(){
     `screen wake lock ${meta.wakeLock}`,
     `resolution       ${video.videoWidth}×${video.videoHeight}`,
     `channel gains    ${gains.map(g => g.toFixed(3)).join("  ")}`,
+    `reference gains  ${refGains.map(g => g.toFixed(3)).join("  ")}`,
     `calibration      k ${cal.k.toFixed(2)}  h ${cal.h.toFixed(1)}  s ${cal.s.toFixed(2)}  l ${cal.l.toFixed(2)}`,
     ``,
     `raw midtone sample per flash (R G B, 0–255)`,

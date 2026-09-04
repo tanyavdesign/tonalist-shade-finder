@@ -34,6 +34,7 @@ In order, as implemented in `takeReading()` and `compute()`:
 3. **Three zones** are averaged per flash: highlight (upper cheek), midtone (jaw into neck), shadow (outer edge). Positioned for a face turned ~45° right with the neck visible. The canvas is mirrored so displayed and sampled coordinates match.
 4. **Ambient subtraction in linear light.** All values are converted sRGB → linear before the black frame is subtracted. This isolates the screen's contribution from room light and is the core of why this might work at all. Subtracting in gamma space would be wrong.
 5. **Channel gains** are estimated from the pure R/G/B flashes as a diagonal correction for sensor channel sensitivity, normalised to a geometric mean of 1 and clamped to [0.5, 2.0].
+5a. **Reference gains**, from the `skinref` flash (`#C68642`) — this flash was being sampled and then never used, leaving no ground truth for what the screen's own "white" actually looks like once emitted and shot through the camera. Phone screens (OLED especially) commonly skew cool/blue at max brightness; channel gains correct camera sensor sensitivity but not that. `referenceGains()` compares the ambient-subtracted, channel-gain-corrected skinref response against the known linear colour of `#C68642` and derives a second diagonal correction the same way (geometric-mean-normalised, clamped to [0.5, 2.0]). This is what fixed readings coming out visibly blue-grey instead of a plausible skin tone.
 6. **Operator calibration** — exposure `k`, hue shift, saturation and lightness scaling — applied in HSL, then converted to LAB.
 7. **Matching** uses CIEDE2000 against a 10-shade library, anchored on the **midtone** zone. Jaw-into-neck is the standard foundation reference: away from blush, away from shadow.
 
@@ -69,4 +70,5 @@ The interface is a measuring instrument, not a beauty product.
 - Tokens live in `:root`. Use them; don't hardcode hex values in components.
 - Numbers are shown, not hidden — ΔE, Lab*, raw RGB. The brand's claim is accuracy, so the evidence stays on screen.
 - Motion is limited to the flash sequence itself. Nothing else animates.
+- A small (88px) self-view (`#miniPreview`) is shown during the flash sequence only, above the flash overlay, so the user can see their framing while the full-screen flash would otherwise hide them completely. It shares the same `MediaStream` as the main video element and plays no part in sampling — kept intentionally small so it doesn't meaningfully change the light reaching the face.
 - Empty and failure states give direction, not mood. The three camera failure messages each point at a different cause; keep them distinct.

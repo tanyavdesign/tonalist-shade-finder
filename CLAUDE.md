@@ -1,0 +1,72 @@
+# shade-finder
+
+A skin tone measurement tool for **tonalist** (working name), a research-phase cosmetics brand. Single HTML file, no build step, no dependencies, no backend.
+
+## What it is for
+
+The brand's thesis is that complexion products fail olive and South Asian skin tones because of crude *undertone* handling, not insufficient shade depth. The mission is undertone accuracy, not shade count.
+
+This tool exists to collect real undertone readings from real people before any product exists. It is a research instrument and a data collection mechanism, not a shade quiz. Every design decision should follow from that: show the numbers, report uncertainty honestly, and never return a confident answer the measurement doesn't support.
+
+It may also become a portfolio case study, so the diagnostics and the reasoning behind the method should stay visible and legible rather than being hidden.
+
+## How it is deployed
+
+- Hosted on GitHub Pages from `main`, root folder, served as `index.html`.
+- **Commit directly to `main`.** Pages only rebuilds from `main`, so a pull request leaves the live site unchanged.
+- The camera requires a secure context. It works on the Pages URL. It does not work from `file://`, from a plain-http local server, or inside any in-app browser (Instagram, WhatsApp, etc). Bugs of the form "camera won't start" are almost always this, not the code.
+
+## Hard constraints — do not break these
+
+1. **One file.** Everything stays in `index.html`. No bundler, no npm, no framework, no build step. It has to be droppable onto any static host.
+2. **No network calls.** No analytics, no CDN scripts beyond the Google Fonts link, no uploading images anywhere. Face images never leave the device. This is a privacy promise made in the UI copy and it must stay true.
+3. **No image is ever stored or transmitted.** Only averaged RGB values per zone. Sampling happens on an offscreen canvas and the frame is discarded.
+4. **Flash timing stays slow.** Each flash holds for ~700–1000ms. Never speed the sequence up into strobe territory (nothing above ~2Hz). This is a photosensitivity safety limit, not a preference.
+5. **Calibration lives in the URL hash**, not localStorage, so it survives a reload and can be shared as a link. Keep it that way.
+6. **Readings are session-only and exported as CSV.** There is deliberately no backend yet.
+
+## The measurement pipeline
+
+In order, as implemented in `takeReading()` and `compute()`:
+
+1. **Lock the camera.** `applyConstraints` attempts `whiteBalanceMode: manual` and `exposureMode: manual`. Auto white balance is the single biggest source of error — it silently corrects the exact thing being measured. Most desktop browsers refuse; Chrome on Android usually allows it. The result is reported in diagnostics rather than assumed.
+2. **Eight full-screen flashes**, sampled from the live video: `ambient` (black), white, grey, red, green, blue, warm yellow, skin reference.
+3. **Three zones** are averaged per flash: highlight (upper cheek), midtone (jaw into neck), shadow (outer edge). Positioned for a face turned ~45° right with the neck visible. The canvas is mirrored so displayed and sampled coordinates match.
+4. **Ambient subtraction in linear light.** All values are converted sRGB → linear before the black frame is subtracted. This isolates the screen's contribution from room light and is the core of why this might work at all. Subtracting in gamma space would be wrong.
+5. **Channel gains** are estimated from the pure R/G/B flashes as a diagonal correction for sensor channel sensitivity, normalised to a geometric mean of 1 and clamped to [0.5, 2.0].
+6. **Operator calibration** — exposure `k`, hue shift, saturation and lightness scaling — applied in HSL, then converted to LAB.
+7. **Matching** uses CIEDE2000 against a 10-shade library, anchored on the **midtone** zone. Jaw-into-neck is the standard foundation reference: away from blush, away from shadow.
+
+## Known limitations — do not paper over these
+
+- **The reading is relative, not absolute.** Without a physical grey card there is no true reference, so exposure is operator-anchored via the admin sliders against a shade verified on real skin. Do not add copy implying lab accuracy.
+- **Ambient correction is unproven.** It is implemented but has never been validated across lighting conditions. If it fails, the honest conclusion is that this needs a physical reference card, not more code.
+- **Auto white balance usually can't be locked on desktop.** Readings taken on a laptop should be treated as less trustworthy than Android Chrome.
+- **No face detection.** Zones are fixed fractions with an alignment guide. This was chosen over MediaPipe for reliability and file size. If misalignment turns out to be the dominant error source, that trade is worth revisiting.
+- **The shade library is invented placeholder data**, not measured pigment values.
+
+## Testing protocol
+
+The instrument's validity is judged on **repeatability**, not on whether the answer looks right — the eye will happily rationalise a wrong result.
+
+1. Three readings in a row, phone braced, no movement between them. Hex values should land within a few points of each other.
+2. Repeat in a different room. Large divergence means ambient correction is not holding.
+3. Check the diagnostics block for warnings before trusting any reading.
+
+Admin panel: five taps on the wordmark. It holds the calibration sliders, the before/after comparison, the session readings table, CSV export, and the diagnostics dump.
+
+## Reporting a bug to a cloud session
+
+Cloud sessions run headless with no camera. They cannot run the tool or see what the user sees. Any bug report must include the full diagnostics block from the admin panel plus a description of what was observed, or the fix will be guesswork.
+
+## Design rules
+
+The interface is a measuring instrument, not a beauty product.
+
+- **Dark by function**: the screen is the light source, so ambient contribution must stay low between flashes.
+- **The only saturated colour in the interface is measured data.** There is no fixed accent colour. Do not introduce one.
+- One typeface (Space Grotesk), hierarchy carried by size and weight.
+- Tokens live in `:root`. Use them; don't hardcode hex values in components.
+- Numbers are shown, not hidden — ΔE, Lab*, raw RGB. The brand's claim is accuracy, so the evidence stays on screen.
+- Motion is limited to the flash sequence itself. Nothing else animates.
+- Empty and failure states give direction, not mood. The three camera failure messages each point at a different cause; keep them distinct.

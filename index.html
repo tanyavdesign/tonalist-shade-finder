@@ -96,45 +96,29 @@
   }
   #flash.on{ display:block; }
 
-  /* Live crops of exactly what's being analysed, shown during the flash
-     sequence only, when the full-screen flash would otherwise hide the
-     face completely. Cropped and mirrored from the same source frame
+  /* A live crop of exactly what's being analysed, shown during the flash
+     sequence only, when the full-screen flash would otherwise hide it
+     completely. Cropped and mirrored from the same source frame
      sampleFrame() reads, so what's shown here is what gets measured —
-     not just a face with boxes drawn over it. Kept small on purpose:
-     together they're a small fraction of screen area, so they barely
-     dent the flash colour actually reaching the face.                 */
+     not an approximation of it. Kept small on purpose: it's a small
+     fraction of screen area, so it barely dents the flash colour
+     actually reaching the skin.                                       */
   #miniPreview{
     position:fixed; z-index:950; display:none; flex-direction:column;
-    align-items:center; gap:8px; top:16px; left:50%; transform:translateX(-50%);
+    align-items:center; gap:6px; top:16px; left:50%; transform:translateX(-50%);
   }
   #miniPreview.on{ display:flex; }
-  #miniOval{
-    width:130px; height:130px; border-radius:50%; background:#000;
+  #miniPreview canvas{
+    width:170px; height:128px; border-radius:8px; background:#000;
     border:1.5px solid rgba(239,233,225,.55); box-shadow:0 2px 16px rgba(0,0,0,.5);
   }
-  .miniZones{ display:flex; gap:6px; }
-  .miniZoneBox{ display:flex; flex-direction:column; align-items:center; gap:3px; }
-  .miniZoneBox canvas{
-    width:58px; height:46px; border-radius:6px; background:#000;
-    border:1px solid rgba(239,233,225,.45);
-  }
-  .miniZoneBox span{ font-size:9px; color:var(--dim); letter-spacing:.02em; }
+  #miniPreview span{ font-size:10px; color:var(--dim); letter-spacing:.02em; }
 
   /* ── results ──────────────────────────────────────────── */
   .result{ display:none; margin-top:var(--stack); }
   .result.on{ display:block; }
 
-  .zones{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); }
-  .zone{ background:var(--ink); padding:14px 12px; }
-  .zone .chip{ width:100%; height:52px; border-radius:2px; margin-bottom:10px; }
-  .zone .chip-empty{
-    background:repeating-linear-gradient(-45deg, var(--surface), var(--surface) 5px, var(--raised) 5px, var(--raised) 10px);
-    border:1px solid var(--line);
-  }
-  .zone .zname{ font-size:13px; color:var(--bone); }
-  .zone .zval{ font-size:12px; color:var(--dim); line-height:1.45; margin-top:3px; font-variant-numeric:tabular-nums; }
-
-  .verdict{ margin-top:26px; padding-top:22px; border-top:1px solid var(--line); }
+  .verdict{ margin-top:0; }
   .verdict-swatch{ width:100%; height:96px; border-radius:2px; background:var(--measure); }
   .verdict h2{ font-size:27px; font-weight:500; letter-spacing:-0.03em; margin:18px 0 4px; }
   .verdict .under{ font-size:15px; color:var(--muted); margin:0; }
@@ -146,6 +130,15 @@
   .alt .n{ font-size:12px; color:var(--dim); margin-top:6px; line-height:1.35; }
 
   .caveat{ font-size:13px; color:var(--dim); margin-top:24px; line-height:1.55; max-width:52ch; }
+
+  .gallery{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .galleryItem{ width:76px; }
+  .gdot{ height:44px; border-radius:2px; background:var(--line); }
+  .gdot.g-empty{
+    background:repeating-linear-gradient(-45deg, var(--surface), var(--surface) 4px, var(--raised) 4px, var(--raised) 8px);
+    border:1px solid var(--line);
+  }
+  .gn{ font-size:10.5px; color:var(--dim); line-height:1.35; margin-top:5px; }
 
   /* ── admin ────────────────────────────────────────────── */
   .admin{ display:none; margin-top:var(--stack); border-top:1px solid var(--line); padding-top:22px; }
@@ -184,7 +177,7 @@
 
   <header class="mast">
     <button class="wordmark" id="mark" title="tonalist">tonalist</button>
-    <div class="subline">shade reading<br>build 2026-09-04.5 · research</div>
+    <div class="subline">shade reading<br>build 2026-09-04.6 · research</div>
   </header>
 
   <div class="stage">
@@ -195,27 +188,24 @@
     </div>
   </div>
   <div id="miniPreview">
-    <canvas id="miniOval"></canvas>
-    <div class="miniZones">
-      <div class="miniZoneBox"><canvas id="miniZone_highlight"></canvas><span>highlight</span></div>
-      <div class="miniZoneBox"><canvas id="miniZone_midtone"></canvas><span>midtone</span></div>
-      <div class="miniZoneBox"><canvas id="miniZone_shadow"></canvas><span>shadow</span></div>
-    </div>
+    <canvas id="miniZone_patch"></canvas>
+    <span>sample patch</span>
   </div>
 
-  <div class="readout" id="readout">Get close enough that your face fills the frame — the screen is your only light source, and it's weak at arm's length. Turn your head about 45° to the right and include your neck in frame. Find even, indirect light and turn your screen brightness to maximum.</div>
+  <div class="readout" id="readout">Hold a patch of clear, bare skin — cheek, jaw, neck, inner arm, wherever — inside the box, close enough that skin fills it completely with no hair or background inside it. The screen is your only light source and it's weak at arm's length, so get close. Find even, indirect light and turn your screen brightness to maximum.</div>
   <div class="steps" id="steps"></div>
 
   <div class="controls">
     <button class="act" id="startCam">Start camera</button>
     <button class="act ghost" id="run" disabled>Take reading</button>
-    <button class="act ghost" id="again" disabled>Read again</button>
+    <button class="act ghost" id="again" disabled>Add another sample</button>
   </div>
 
   <p class="note">
-    The reading uses eight brief full-screen colour flashes, about six seconds in total, to measure how your
+    Each reading uses eight full-screen colour flashes, about seven seconds in total, to measure how your
     camera and screen respond before it measures your skin. The screen changes colour slowly rather than
-    strobing. If flashing light is a problem for you, don't run it.
+    strobing. Take as many samples as you want — move to a different patch of skin and press the button again
+    each time. If flashing light is a problem for you, don't run it.
   </p>
 
   <p class="note">
@@ -225,8 +215,6 @@
   </p>
 
   <section class="result" id="result">
-    <div class="zones" id="zones"></div>
-
     <div class="verdict">
       <div class="verdict-swatch" id="vSwatch"></div>
       <h2 id="vName">—</h2>
@@ -235,6 +223,9 @@
       <div class="alts" id="alts"></div>
       <p class="caveat" id="caveat"></p>
     </div>
+
+    <p class="subhead" id="galleryHead" style="margin-top:22px"></p>
+    <div class="gallery" id="gallery"></div>
   </section>
 
   <section class="admin" id="admin">
@@ -319,28 +310,30 @@ const SHADES = [
    'black' is the ambient baseline. Everything else is subtracted
    against it so room light is removed from the measurement.        */
 const FLASHES = [
-  { id:"ambient", color:"#000000", settle:600 },
-  { id:"white",   color:"#FFFFFF", settle:420 },
-  { id:"grey",    color:"#808080", settle:380 },
-  { id:"red",     color:"#FF0000", settle:380 },
-  { id:"green",   color:"#00FF00", settle:380 },
-  { id:"blue",    color:"#0000FF", settle:380 },
-  { id:"warm",    color:"#FFE8B8", settle:420 },
-  { id:"skinref", color:"#C68642", settle:420 },
+  { id:"ambient", color:"#000000", settle:1000 },
+  { id:"white",   color:"#FFFFFF", settle:800 },
+  { id:"grey",    color:"#808080", settle:750 },
+  { id:"red",     color:"#FF0000", settle:750 },
+  { id:"green",   color:"#00FF00", settle:750 },
+  { id:"blue",    color:"#0000FF", settle:750 },
+  { id:"warm",    color:"#FFE8B8", settle:850 },
+  { id:"skinref", color:"#C68642", settle:800 },
 ];
 
-/* ── sample zones, as fractions of the mirrored frame ──────────────
-   Positioned for a face turned ~45° right with the neck visible, filling
-   the frame close-up (required — see the "get close" copy above; the
-   screen is too weak a light source at arm's length). These boxes were
-   originally tuned for a smaller, farther-back face and landed on the
-   eyes instead of cheek/jaw once users actually got close enough for a
-   usable reading. Re-tuned against real close-up framing; still worth
-   double-checking against your own screenshots after a reading.        */
+/* ── sample zone, as a fraction of the mirrored frame ──────────────
+   Three fixed, face-relative zones (highlight/midtone/shadow) assumed a
+   specific face geometry at a specific distance — at any framing other
+   than exactly that, boxes landed on eyes, hair, or background instead
+   of skin (this happened twice, at two different framings). There's no
+   face detection to correct for that.
+
+   Replaced with one generous, dead-centre patch instead: point the
+   camera at any patch of clear, makeup-free skin — cheek, jaw, neck,
+   inner arm, wherever — close enough that skin fills the box, and
+   press "take reading". Press it again for another patch, as many
+   times as wanted; each becomes its own entry in the sample list.     */
 const ZONES = [
-  { key:"highlight", label:"Highlight", note:"upper cheek",  x:0.27, y:0.46, w:0.16, h:0.12 },
-  { key:"midtone",   label:"Midtone",   note:"jaw to neck",  x:0.43, y:0.74, w:0.18, h:0.13 },
-  { key:"shadow",    label:"Shadow",    note:"outer edge",   x:0.63, y:0.44, w:0.14, h:0.12 },
+  { key:"patch", label:"Sample", note:"skin patch", x:0.30, y:0.36, w:0.40, h:0.30 },
 ];
 
 /* ══ colour maths ═══════════════════════════════════════════════ */
@@ -493,7 +486,7 @@ async function startCamera(){
   await lockCamera();
   await lockScreenAwake();
   drawGuide();
-  say("Get close — fill the frame with your face. Turn ~45° right, neck in frame, then take the reading. Hold still through the flashes.");
+  say("Hold a patch of bare skin inside the box, close enough to fill it, then take the reading. Hold still through the flashes.");
 }
 
 /* There is no web API to raise a device's actual display brightness —
@@ -541,44 +534,38 @@ async function lockCamera(){
    and again, at a smaller size, for the mini preview during the flash
    sequence, so that preview shows the actual region being analysed
    rather than just a plain self-view.                                 */
-function drawGuideOn(canvasEl, showLabels){
+/* One box now, not a face oval + three offset zones — those assumed a
+   specific face geometry and distance that never held reliably. This
+   box is just "put skin here"; it works the same whether that's a
+   cheek, a jaw, a neck, or the back of a hand.                        */
+function drawGuideOn(canvasEl){
   const r = canvasEl.getBoundingClientRect();
   canvasEl.width = r.width; canvasEl.height = r.height;
   const g = canvasEl.getContext("2d");
   g.clearRect(0,0,canvasEl.width,canvasEl.height);
 
-  g.strokeStyle = "rgba(239,233,225,0.22)";
+  const z = ZONES[0];
+  const x=z.x*canvasEl.width, y=z.y*canvasEl.height, w=z.w*canvasEl.width, h=z.h*canvasEl.height;
+  g.strokeStyle = "rgba(239,233,225,0.75)";
   g.lineWidth = 1;
-  g.beginPath();
-  g.ellipse(canvasEl.width*0.44, canvasEl.height*0.44, canvasEl.width*0.36, canvasEl.height*0.34, 0, 0, Math.PI*2);
-  g.stroke();
-
-  ZONES.forEach(z => {
-    const x=z.x*canvasEl.width, y=z.y*canvasEl.height, w=z.w*canvasEl.width, h=z.h*canvasEl.height;
-    g.strokeStyle = "rgba(239,233,225,0.75)";
-    g.lineWidth = 1;
-    g.strokeRect(x, y, w, h);
-    if(showLabels){
-      g.fillStyle = "rgba(239,233,225,0.75)";
-      g.font = "11px 'Space Grotesk', sans-serif";
-      g.fillText(z.label.toLowerCase(), x, y - 5);
-    }
-  });
+  g.strokeRect(x, y, w, h);
+  g.fillStyle = "rgba(239,233,225,0.75)";
+  g.font = "11px 'Space Grotesk', sans-serif";
+  g.fillText("place skin here", x, y - 7);
 }
-function drawGuide(){ drawGuideOn(el("guide"), true); }
+function drawGuide(){ drawGuideOn(el("guide")); }
 window.addEventListener("resize", () => { if(stream) drawGuide(); });
 
-/* ══ crop previews (oval + zone thumbnails, flash-sequence only) ═══
+/* ══ crop preview (flash-sequence only) ═════════════════════════════
    Shows exactly what's being analysed — cropped and mirrored the same
-   way sampleFrame() reads it — rather than the whole face with boxes
-   drawn on top. Runs its own low-res mirrored copy of the frame
-   (previewWork) instead of touching `work`, which sampleFrame() is
-   actively writing to mid-sequence; sharing one canvas between a
-   render loop and the sampler would corrupt whichever runs mid-draw. */
+   way sampleFrame() reads it — rather than a plain self-view. Runs its
+   own low-res mirrored copy of the frame (previewWork) instead of
+   touching `work`, which sampleFrame() is actively writing to
+   mid-sequence; sharing one canvas between a render loop and the
+   sampler would corrupt whichever runs mid-draw.                      */
 const previewWork = document.createElement("canvas");
 const pctx = previewWork.getContext("2d");
 const PREVIEW_SCALE = 0.35;
-const OVAL_BOUNDS = { x:0.08, y:0.10, w:0.72, h:0.68 }; // bounding box of the guide ellipse (center .44/.44, radii .36/.34)
 let previewRAF = null;
 
 function renderPreviewFrame(){
@@ -593,31 +580,22 @@ function renderPreviewFrame(){
   pctx.drawImage(video, 0, 0, pw, ph);
   pctx.restore();
 
-  drawCrop(el("miniOval"), OVAL_BOUNDS, true);
-  ZONES.forEach(z => drawCrop(el("miniZone_"+z.key), z, false));
+  ZONES.forEach(z => drawCrop(el("miniZone_"+z.key), z));
 }
 
-function drawCrop(canvasEl, rectFrac, oval){
+function drawCrop(canvasEl, rectFrac){
   const g = canvasEl.getContext("2d");
   const sx = rectFrac.x*previewWork.width, sy = rectFrac.y*previewWork.height;
   const sw = rectFrac.w*previewWork.width, sh = rectFrac.h*previewWork.height;
   g.clearRect(0,0,canvasEl.width,canvasEl.height);
-  if(oval){
-    g.save();
-    g.beginPath();
-    g.ellipse(canvasEl.width/2, canvasEl.height/2, canvasEl.width/2, canvasEl.height/2, 0, 0, Math.PI*2);
-    g.clip();
-  }
   g.drawImage(previewWork, sx, sy, sw, sh, 0, 0, canvasEl.width, canvasEl.height);
-  if(oval) g.restore();
 }
 
 /* Fixed internal resolution (2x the CSS size for sharpness); set once
    when the panel becomes visible rather than every frame — assigning
    canvas.width/height clears the bitmap, which is wasted work at 30fps. */
 function sizeMiniCanvases(){
-  el("miniOval").width = el("miniOval").height = 260;
-  ZONES.forEach(z => { const c = el("miniZone_"+z.key); c.width = 116; c.height = 92; });
+  ZONES.forEach(z => { const c = el("miniZone_"+z.key); c.width = 340; c.height = 256; });
 }
 
 function startPreviewLoop(){
@@ -760,9 +738,7 @@ function compute(samples){
     };
   }
 
-  /* The midtone is the shade-matching zone — jaw into neck is the
-     standard reference for foundation, away from blush and shadow. */
-  const anchor = zoneOut.midtone;
+  const anchor = zoneOut.patch;
   const ranked = SHADES
     .map(s => {
       const [L,a,b] = rgbToLab(...hexToRgb(s.hex));
@@ -808,10 +784,10 @@ const CAL_TARGETS = { white:"#FFFFFF", grey:"#808080", red:"#FF0000", green:"#00
    response elsewhere — never to white/grey/red/green/blue themselves,
    which exist only to characterise the system, not to report a tone.  */
 function calibrationGains(samples, meta){
-  const amb = samples.ambient.midtone.map(srgbToLinear);
+  const amb = samples.ambient.patch.map(srgbToLinear);
   const numer = [0,0,0], denom = [0,0,0];
   for(const id in CAL_TARGETS){
-    const observed = samples[id].midtone.map((v,i) => Math.max(0, srgbToLinear(v) - amb[i]));
+    const observed = samples[id].patch.map((v,i) => Math.max(0, srgbToLinear(v) - amb[i]));
     const target = hexToRgb(CAL_TARGETS[id]).map(srgbToLinear);
     for(let c=0;c<3;c++){ numer[c] += target[c]*observed[c]; denom[c] += observed[c]*observed[c]; }
   }
@@ -831,49 +807,56 @@ function render(){
   if(!lastReading) return;
   const { zones, ranked, meta } = lastReading;
 
-  el("zones").innerHTML = ZONES.map(z => {
-    const d = zones[z.key];
+  const d = zones.patch;
+  if(d.lowSignal){
     /* A near-zero signal is mostly sensor noise. A fixed gain still scales
        that noise up into a fully saturated colour, which looks exactly as
        confident on screen as a real reading — the opposite of the honesty
        this instrument is supposed to have. Flag it instead of hiding it
        behind a plausible-looking swatch. */
-    if(d.lowSignal){
-      return `<div class="zone">
-        <div class="chip chip-empty"></div>
-        <div class="zname">${d.label}</div>
-        <div class="zval">${d.note}<br>insufficient signal<br>no reliable colour</div>
-      </div>`;
-    }
-    return `<div class="zone">
-      <div class="chip" style="background:${d.hex}"></div>
-      <div class="zname">${d.label}</div>
-      <div class="zval">${d.note}<br>${d.hex}<br>L* ${d.lab[0].toFixed(1)}</div>
+    document.documentElement.style.setProperty("--measure", "var(--line)");
+    el("vSwatch").style.background = "var(--line)";
+    el("vName").textContent = "Insufficient signal";
+    el("vUnder").textContent = "Move closer, or raise screen brightness, and take the reading again.";
+    el("vDelta").textContent = "";
+    el("alts").innerHTML = "";
+  } else {
+    const top = ranked[0];
+    document.documentElement.style.setProperty("--measure", d.hex);
+    el("vSwatch").style.background = d.hex;
+    el("vName").textContent = top.name;
+    el("vUnder").textContent = top.undertone + " · matched on this sample";
+    el("vDelta").textContent =
+      `ΔE₀₀ ${top.dE.toFixed(1)} · L* ${d.lab[0].toFixed(1)} ` +
+      `a* ${d.lab[1].toFixed(1)} b* ${d.lab[2].toFixed(1)}`;
+    el("alts").innerHTML = ranked.slice(1,4).map(s =>
+      `<div class="alt"><div class="dot" style="background:${s.hex}"></div>
+       <div class="n">${s.name}<br>ΔE ${s.dE.toFixed(1)}</div></div>`
+    ).join("");
+  }
+
+  let cav = d.lowSignal ? "" :
+    ranked[0].dE < 2
+      ? "Under ΔE 2 the difference is close to invisible to the eye."
+      : ranked[0].dE < 5
+        ? "ΔE between 2 and 5 is a visible but wearable difference."
+        : "ΔE above 5 means nothing in this library is genuinely close to you — which is the point the brand is making.";
+  if(meta.warnings.length) cav += (cav ? " " : "") + meta.warnings.join(" ");
+  el("caveat").textContent = cav;
+
+  /* Every capture — not just the latest — since the whole point of a
+     single re-placeable patch zone is taking as many samples as wanted
+     (different spots, lighting checks, repeatability tests). readings[]
+     already accumulates every reading taken this session; just surface
+     it here instead of only in the admin panel's export.               */
+  el("galleryHead").textContent = `Samples this session (${readings.length})`;
+  el("gallery").innerHTML = readings.slice().reverse().map(r => {
+    const p = r.zones.patch;
+    return `<div class="galleryItem" title="${r.t}">
+      <div class="gdot${p.lowSignal ? " g-empty" : ""}" ${p.lowSignal ? "" : `style="background:${p.hex}"`}></div>
+      <div class="gn">${p.lowSignal ? "no signal" : r.match}<br>${p.lowSignal ? "" : "ΔE "+r.dE.toFixed(1)}</div>
     </div>`;
   }).join("");
-
-  const top = ranked[0];
-  document.documentElement.style.setProperty("--measure", zones.midtone.hex);
-  el("vSwatch").style.background = zones.midtone.hex;
-  el("vName").textContent = top.name;
-  el("vUnder").textContent = top.undertone + " · matched on the jaw-to-neck reading"
-    + (zones.midtone.lowSignal ? " — signal was too weak here to trust this" : "");
-  el("vDelta").textContent =
-    `ΔE₀₀ ${top.dE.toFixed(1)} · L* ${zones.midtone.lab[0].toFixed(1)} ` +
-    `a* ${zones.midtone.lab[1].toFixed(1)} b* ${zones.midtone.lab[2].toFixed(1)}`;
-
-  el("alts").innerHTML = ranked.slice(1,4).map(s =>
-    `<div class="alt"><div class="dot" style="background:${s.hex}"></div>
-     <div class="n">${s.name}<br>ΔE ${s.dE.toFixed(1)}</div></div>`
-  ).join("");
-
-  let cav = top.dE < 2
-    ? "Under ΔE 2 the difference is close to invisible to the eye."
-    : top.dE < 5
-      ? "ΔE between 2 and 5 is a visible but wearable difference."
-      : "ΔE above 5 means nothing in this library is genuinely close to you — which is the point the brand is making.";
-  if(meta.warnings.length) cav += " " + meta.warnings.join(" ");
-  el("caveat").textContent = cav;
 
   el("result").classList.add("on");
   say(meta.warnings.length ? "Reading taken, with conditions worth fixing." : "Reading taken.", meta.warnings.length>0);
@@ -930,8 +913,8 @@ function refreshAdmin(){
   const refHex = el("ref").value;
   el("baRef").style.background = refHex;
   if(lastReading){
-    el("baRaw").style.background = hex(...lastReading.zones.midtone.raw);
-    el("baCal").style.background = lastReading.zones.midtone.hex;
+    el("baRaw").style.background = hex(...lastReading.zones.patch.raw);
+    el("baCal").style.background = lastReading.zones.patch.hex;
   }
 
   const tb = el("tbl").querySelector("tbody");
@@ -950,7 +933,7 @@ function refreshAdmin(){
 function diagText(){
   const { samples, gains, meta, zones } = lastReading;
   const rows = FLASHES.map(f => {
-    const v = samples[f.id].midtone.map(n => n.toFixed(0).padStart(3));
+    const v = samples[f.id].patch.map(n => n.toFixed(0).padStart(3));
     return `  ${f.id.padEnd(8)} ${v.join("  ")}`;
   }).join("\n");
   return [
@@ -960,11 +943,11 @@ function diagText(){
     `calibration gains ${gains.map(g => g.toFixed(3)).join("  ")}  (fit from white/grey/red/green/blue; applied to warm)`,
     `calibration      k ${cal.k.toFixed(2)}  h ${cal.h.toFixed(1)}  s ${cal.s.toFixed(2)}  l ${cal.l.toFixed(2)}`,
     ``,
-    `raw midtone sample per flash (R G B, 0–255)`,
+    `raw patch sample per flash (R G B, 0–255)`,
     rows,
     ``,
-    `signal energy    ${zones.midtone.energy.toFixed(4)} (screen)`,
-    `ambient energy   ${zones.midtone.ambEnergy.toFixed(4)} (room)`,
+    `signal energy    ${zones.patch.energy.toFixed(4)} (screen)`,
+    `ambient energy   ${zones.patch.ambEnergy.toFixed(4)} (room)`,
     meta.warnings.length ? `\nwarnings\n  ` + meta.warnings.join("\n  ") : `\nno warnings`
   ].join("\n");
 }
